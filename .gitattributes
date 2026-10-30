@@ -1,0 +1,20 @@
+# 目标机是 Linux，源码一律 LF。
+# 不加这条，Windows 上克隆（core.autocrlf=true）会把 *.sh 变成 CRLF，
+# 然后在 Linux 上以 "bash: \r: command not found" 的方式失败 —— 而且看起来像脚本写错了。
+* text=auto eol=lf
+
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+Makefile        text eol=lf
+*.go            text eol=lf
+*.py            text eol=lf
+*.md            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.json          text eol=lf
+
+# 二进制不进 diff
+*.png binary
+*.jpg binary
+*.mp3 binary
+*.wav binary

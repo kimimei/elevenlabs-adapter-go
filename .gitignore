@@ -1,0 +1,48 @@
+# 二进制与构建产物
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# 运行时数据：账本里含 token 前 6 位与 IP，不进仓库
+/logs/
+# 任务表里含客户 IP 与 voice_id，同样不进仓库
+/logs/jobs/
+
+# 冒烟/崩溃回归的临时产物（脚本会自己清，这里只兜住中途中断的情况）
+/.smoke/
+/.smoke*
+/.crash-check/
+
+# 环境变量（含 Key）
+.env
+.env.local
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# M6 影子对账的临时账本（含 token 前 6 位），报告另存 output/
+.m6/
+# M6-B 真上游抽样：真 Key 的 token 前缀与真实用量，同样不进仓库
+.m6b/
+
+# 中文音色快照（含 voice_id 与 sharing 状态），临时文件
+.zh_voices.json
+
+# 音色切换验收的临时账本与启动日志
+.verify_xinghe/
+
+# 改配置前的本地备份（voices.json.bak_YYYYmmdd_HHMMSS）
+*.bak_*
+
+# 内部运维脚本：影子对账依赖私有 Python 实现，其余绑定具体账号的音色与真实 Key。
+# 对外既跑不起来，也会外露账号信息 —— 不随公开仓库发布，本地保留。
+/scripts/internal/
+
+# Python 缓存
+__pycache__/
+*.pyc

@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # 跟着 go.mod 里的版本走，避免本地能编译、CI 报 "go.mod requires go >= x"
+          go-version-file: go.mod
+          cache: true
+
+      - name: 静态检查
+        run: |
+          go vet ./...
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化，先跑 gofmt -w："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: 单元测试
+        run: go test ./...
+
+      - name: 编译（静态，与生产同参数）
+        run: CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/adapter ./cmd/adapter
+
+      - name: 端到端冒烟
+        run: bash scripts/smoke.sh
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 功能可用性验收
+        run: python scripts/acceptance.py
+
+      - name: 崩溃恢复回归
+        run: python scripts/crash_recovery_check.py
+
+  # test-race 单独一个 job：它需要 CGO 与 C 工具链，失败原因与普通测试不同，
+  # 混在一起会让人分不清「逻辑错了」还是「环境缺工具」。
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 并发检测（账本是并发写入点）
+        run: go test -race ./...
