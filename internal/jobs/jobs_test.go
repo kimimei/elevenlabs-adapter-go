@@ -75,13 +75,15 @@ func waitTerminal(t *testing.T, m *Manager, id string) *Job {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if j := m.lookup(id); j != nil && j.Terminal() {
-			return j
+		// 必须走 Snapshot：lookup 返回的是活指针，锁已释放，
+		// 直接读 Status 会和 worker 的写入撞上（-race 会报 DATA RACE）。
+		if j, ok := m.Snapshot(id); ok && j.Terminal() {
+			return &j
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	j := m.lookup(id)
-	if j == nil {
+	j, ok := m.Snapshot(id)
+	if !ok {
 		t.Fatalf("任务 %s 消失了", id)
 	}
 	t.Fatalf("任务 %s 未在 5s 内进入终态（当前 %s）", id, j.Status)
@@ -92,14 +94,14 @@ func waitStatus(t *testing.T, m *Manager, id, want string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if j := m.lookup(id); j != nil && j.Status == want {
+		if j, ok := m.Snapshot(id); ok && j.Status == want {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	j := m.lookup(id)
+	j, ok := m.Snapshot(id)
 	got := "<消失>"
-	if j != nil {
+	if ok {
 		got = j.Status
 	}
 	t.Fatalf("任务 %s 未进入 %s（当前 %s）", id, want, got)
@@ -267,8 +269,8 @@ func TestQueuedJobBecomesInterruptedAfterRestart(t *testing.T) {
 	}
 
 	m, _ := newMgr(t, baseSettings(dir), "http://127.0.0.1:1")
-	j := m.lookup("aaaa1111")
-	if j == nil {
+	j, ok := m.Snapshot("aaaa1111")
+	if !ok {
 		t.Fatalf("任务没有恢复出来")
 	}
 	if j.Status != StatusFailed {
@@ -316,7 +318,10 @@ func TestRunningJobNotResumedAfterRestart(t *testing.T) {
 	// 给 worker 一点时间：如果它错误地把任务当成可执行，这里会看到上游被调用
 	time.Sleep(150 * time.Millisecond)
 
-	j := m.lookup("bbbb2222")
+	j, ok := m.Snapshot("bbbb2222")
+	if !ok {
+		t.Fatalf("恢复后的任务 bbbb2222 不见了")
+	}
 	if j.Status != StatusFailed || j.ErrorCode != CodeInterrupted {
 		t.Fatalf("状态 = %s/%s，期望 failed/interrupted", j.Status, j.ErrorCode)
 	}

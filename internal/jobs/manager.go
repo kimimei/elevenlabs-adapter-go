@@ -779,10 +779,34 @@ func (m *Manager) bill(j *Job, status int, credits *int, upRID *string, errMsg s
 
 // ---------------- 内部工具 ----------------
 
+// lookup 在锁内取出任务指针，**返回时锁已释放**。
+//
+// ⚠️ 拿到的指针指向活结构体，worker 随时在改它。所以：
+//   - 只允许把它交给「自己会加锁」的内部方法（finalize / bill / save / Cancel 等）；
+//   - **绝不允许**在锁外读它的字段。那种读没有任何共同锁，就是 data race。
+//
+// 这不是理论风险：CI 的 -race job 真抓到过 —— process() 在锁内写 Status，
+// 而测试拿到 lookup 的结果后直接调 Terminal() 读同一个字段，当场报
+// WARNING: DATA RACE。只读场景请一律用 Snapshot。
 func (m *Manager) lookup(id string) *Job {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.jobs[id]
+}
+
+// Snapshot 返回任务的一份副本，可以安全地在锁外读。
+//
+// 与 save / bill 里的 `snap := *j` 是同一套做法：复制必须在锁内完成，
+// 锁外只碰副本。副本之间不共享写入 —— 但其中的 audio 切片仍是同一块底层数组，
+// 只读没问题，别就地改它。
+func (m *Manager) Snapshot(id string) (Job, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return Job{}, false
+	}
+	return *j, true
 }
 
 // save 落盘。取快照后解锁再写 —— 序列化活结构体会和并发写字段打架。
