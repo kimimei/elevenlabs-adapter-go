@@ -10,9 +10,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # 跟着 go.mod 里的版本走，避免本地能编译、CI 报 "go.mod requires go >= x"
           go-version-file: go.mod
@@ -20,7 +20,7 @@ jobs:
 
       # Python 放在冒烟之前：冒烟、验收、崩溃回归三个脚本都在同一 job 里，
       # 放在中间会让「哪一步需要哪个运行时」变成隐藏依赖。
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -54,8 +54,8 @@ jobs:
   race:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
