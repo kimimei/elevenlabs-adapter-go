@@ -38,11 +38,13 @@ func (a *App) handleUsage(c *gin.Context) {
 	byToken := a.Ledger.UsageByToken(days)
 
 	totalIn, totalSent, totalSaved := 0, 0, 0
+	totalRequests := 0
 	callers := make([]gin.H, 0, len(byToken))
 	for _, r := range byToken {
 		totalIn += r.InChars
 		totalSent += r.SentChars
 		totalSaved += r.SavedChars
+		totalRequests += r.Requests
 		callers = append(callers, gin.H{
 			"caller":      r.Token,
 			"requests":    r.Requests,
@@ -73,7 +75,11 @@ func (a *App) handleUsage(c *gin.Context) {
 			"revenue_usd":        today.RevenueUSD,
 		},
 		"window": gin.H{
-			"requests":           win.Requests,
+			// ⚠️ requests 必须与 in_chars 同源：都取自 by_token（只含成功请求）。
+			// 混用 win.Requests（含失败）会让 requests 与 in_chars 对不上 ——
+			// 失败请求有次数却没字符，看起来像"有请求但没流量"，排查时极难定位。
+			// 失败请求的次数在 today.failed 里查。
+			"requests":           totalRequests,
 			"in_chars":           totalIn,
 			"sent_chars":         totalSent,
 			"saved_chars":        totalSaved,
