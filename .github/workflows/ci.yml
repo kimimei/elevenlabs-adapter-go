@@ -60,4 +60,18 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: 并发检测（账本是并发写入点）
-        run: go test -race ./...
+        shell: bash
+        run: |
+          set +e
+          go test -race ./... >race.log 2>&1
+          rc=$?
+          cat race.log
+          if [ $rc -ne 0 ]; then
+            # job 日志要仓库管理员权限才能下载，注解却是匿名可读的。
+            # 不把摘录塞进注解，排查的人（以及没配 token 的自动化）就只能
+            # 看到一句 "Process completed with exit code 1"，等于什么都没说。
+            # 工作流命令里换行必须写成 %0A，% 本身要先转义成 %25。
+            digest="$(head -n 40 race.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            echo "::error title=race 检测失败（前 40 行）::${digest}"
+          fi
+          exit $rc

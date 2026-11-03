@@ -4,6 +4,8 @@
 *.exe
 *.test
 *.out
+# CI 里 -race 的输出中转文件（失败摘录会同时写进注解）
+race.log
 
 # 运行时数据：账本里含 token 前 6 位与 IP，不进仓库
 /logs/
