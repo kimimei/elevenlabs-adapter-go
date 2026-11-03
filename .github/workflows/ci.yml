@@ -18,6 +18,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Python 放在冒烟之前：冒烟、验收、崩溃回归三个脚本都在同一 job 里，
+      # 放在中间会让「哪一步需要哪个运行时」变成隐藏依赖。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: 静态检查
         run: |
           go vet ./...
@@ -36,10 +42,6 @@ jobs:
 
       - name: 端到端冒烟
         run: bash scripts/smoke.sh
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
 
       - name: 功能可用性验收
         run: python scripts/acceptance.py

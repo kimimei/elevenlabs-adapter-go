@@ -29,7 +29,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-BIN = os.path.join(ROOT, 'bin', 'adapter')
+# Windows 上 go build 产出的是 adapter.exe，硬编码 'adapter' 会找不到文件
+# （在 Windows 上靠手动复制一个无后缀副本「跑通」，换台机器就露馅）。
+# 需要覆盖时用 ADAPTER_BIN 环境变量，与 acceptance.py 保持一致。
+BIN = os.environ.get('ADAPTER_BIN') or os.path.join(
+    ROOT, 'bin', 'adapter.exe' if os.name == 'nt' else 'adapter')
 WORK = os.path.join(ROOT, '.crash-check')
 JOBS = os.path.join(WORK, 'jobs')
 BILL = os.path.join(WORK, 'billing')
@@ -37,7 +41,7 @@ PORT = 18131
 STUB_PORT = 18500
 
 if not os.path.exists(BIN):
-    raise SystemExit('先编译：go build -o bin/adapter ./cmd/adapter')
+    raise SystemExit('先编译：go build -o bin/adapter ./cmd/adapter（Windows 上产物是 adapter.exe）')
 
 shutil.rmtree(WORK, ignore_errors=True)
 
