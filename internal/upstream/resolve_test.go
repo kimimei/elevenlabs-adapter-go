@@ -253,3 +253,23 @@ func TestResolveRejectsUnknownModel(t *testing.T) {
 		t.Fatalf("空 model 应回退默认 %q，实际 %q", def, mid)
 	}
 }
+
+// elevenlabs-tts 必须映射到真实引擎，不能原样透传给上游。
+//
+// 这条锁的是一个真实缺陷：曾经有个分支 `if model == "elevenlabs-tts" { return model }`
+// 把它当引擎名直接发给 ElevenLabs，上游返回
+// "An invalid ID has been received: 'elevenlabs-tts'" → 整条兼容入口 400。
+// 反证：把该直通分支加回去，此测试立即变红。
+func TestElevenlabsTtsAliasResolvesToRealEngine(t *testing.T) {
+	c := mustCatalog(t)
+	_, model, _, err := ResolveVoiceAndModel("elevenlabs-tts", "yun", c, "eleven_v3")
+	if err != nil {
+		t.Fatalf("elevenlabs-tts 是注册过的兼容名，不应报错: %v", err)
+	}
+	if model == "elevenlabs-tts" {
+		t.Fatalf("elevenlabs-tts 被原样透传给上游，上游会报 invalid ID")
+	}
+	if !strings.HasPrefix(model, "eleven_") {
+		t.Fatalf("应映射到 eleven_* 引擎名，实际 %q", model)
+	}
+}

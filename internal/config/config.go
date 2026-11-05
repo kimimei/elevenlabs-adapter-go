@@ -61,7 +61,12 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		APIBase:        strings.TrimRight(envStr("ELEVENLABS_API_BASE", "https://api.elevenlabs.io/v1"), "/"),
-		DefaultModel:   envStr("ELEVENLABS_DEFAULT_MODEL", "eleven_multilingual_v2"),
+		// 默认引擎用 eleven_v3 而不是 eleven_multilingual_v2。
+		// 原因（2026-11-05 实测）：multilingual_v2 在中文多音字上会读错，
+		// 例如「配音行业的那些事」把「配音」读成「配硬」（pèi yīn → pèi yìng）。
+		// 同一段文本用 v3 / v4 复测均正确，故把中文默认档切到 v3。
+		// v2 仍可通过显式传 model="eleven_multilingual_v2" 使用（保守兜底档）。
+		DefaultModel:   envStr("ELEVENLABS_DEFAULT_MODEL", "eleven_v3"),
 		Mock:           envBool("ELEVENLABS_MOCK"),
 		TimeoutSeconds: envFloat("ELEVENLABS_TIMEOUT", 300),
 		MaxRetries:     envInt("ELEVENLABS_MAX_RETRIES", 0),

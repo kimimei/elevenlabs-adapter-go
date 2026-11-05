@@ -38,9 +38,9 @@
       "label": "OpenAI 兼容模型名",
       "enabled_by_default": false,
       "models": {
-        "tts-1": {"model": "eleven_multilingual_v2", "label": "OpenAI 经典名"},
-        "tts-1-hd": {"model": "eleven_multilingual_v2", "label": "OpenAI 高清名"},
-        "elevenlabs-tts": {"model": "eleven_multilingual_v2", "label": "通用别名"},
+        "tts-1": {"model": "eleven_v3", "label": "OpenAI 经典名（V3 多音字正确）"},
+        "tts-1-hd": {"model": "eleven_v3", "label": "OpenAI 高清名（V3 多音字正确）"},
+        "elevenlabs-tts": {"model": "eleven_v3", "label": "通用别名（V3 多音字正确）"},
         "eleven-flash": {"model": "eleven_flash_v2_5", "label": "Flash 别名"},
         "eleven-turbo": {"model": "eleven_turbo_v2_5", "label": "Turbo 别名"}
       }

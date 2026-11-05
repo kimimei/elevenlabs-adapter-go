@@ -132,10 +132,11 @@ func ResolveVoiceAndModel(model, voice string, cat *voices.Catalog, defaultModel
 			return voiceID, model, Extra{}, nil
 		}
 	}
-	// elevenlabs-tts 是历史兼容名（Python 版也认），单独放行
-	if model == "elevenlabs-tts" {
-		return voiceID, model, Extra{}, nil
-	}
+	// 注意：不要再单独放行 "elevenlabs-tts"。
+	// 它不是上游认识的引擎名，放行会把字面量原样发过去，上游报
+	// "An invalid ID has been received: 'elevenlabs-tts'" → 400。
+	// 它已经在 voices.json 的 compat 包里注册成别名，应当走上面的 Aliases 分支映射到真实引擎。
+	// （2026-11-05 实测发现：该别名此前一直返回 400，属于既有缺陷。）
 
 	// 未知 model 必须报错，不能回退到默认模型。
 	//

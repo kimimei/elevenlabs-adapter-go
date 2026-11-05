@@ -29,7 +29,7 @@ func (a *App) handleJobSubmit(c *gin.Context) {
 		return
 	}
 
-	in, perr := parseSpeechBody(raw)
+	in, perr := parseSpeechBody(raw, a.Cfg.DefaultModel)
 	if perr != nil {
 		writeErr(c, http.StatusBadRequest, apierr.JoinLoc(perr.field, perr.message),
 			"invalid_request_error", perr.fix, nil)

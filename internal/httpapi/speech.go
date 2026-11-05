@@ -76,7 +76,7 @@ func (a *App) handleSpeech(c *gin.Context) {
 		return
 	}
 
-	in, perr := parseSpeechBody(raw)
+	in, perr := parseSpeechBody(raw, a.Cfg.DefaultModel)
 	if perr != nil {
 		writeErr(c, http.StatusBadRequest, apierr.JoinLoc(perr.field, perr.message),
 			"invalid_request_error", perr.fix, nil)
@@ -293,14 +293,19 @@ func (a *App) handleSpeech(c *gin.Context) {
 // speed 传字符串 "1.0"、stream 传 "true" 或 1，Python 版都是接受的。
 // Go 的 encoding/json 会直接报错 —— 升级即故障，存量客户会突然全量 400。
 
-func parseSpeechBody(raw []byte) (*speechIn, *parseErr) {
+// defaultModel 是这个请求在「字段缺失」时该用的引擎。
+// 注意：不能在这里写死引擎名 —— 曾经硬编码 eleven_multilingual_v2，
+// 结果 config 里把默认改成 eleven_v3 也不生效，因为字段缺失时解析层就填好了，
+// 根本走不到 ResolveVoiceAndModel 的 defaultModel 分支。
+// 传空串表示「交给下游按配置决定」，保持与显式传 model 一致的语义。
+func parseSpeechBody(raw []byte, defaultModel string) (*speechIn, *parseErr) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, &parseErr{field: "", message: "JSON 解析失败：" + err.Error(), fix: validationFix}
 	}
 
 	out := &speechIn{
-		Model:          "eleven_multilingual_v2",
+		Model:          defaultModel,
 		ResponseFormat: "mp3",
 	}
 
