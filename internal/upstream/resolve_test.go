@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/kimimei/elevenlabs-adapter-go/internal/voices"
@@ -199,5 +200,56 @@ func TestTTSURLEscapesVoiceID(t *testing.T) {
 	want := "https://api.elevenlabs.io/v1/text-to-speech/abc%2Fdef"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// 未知 model 必须明确报错，绝不能静默回退到默认模型。
+//
+// 这条测试锁的是一个真实交付风险：原实现 `mid := defaultModel` 让任何拼错的模型名
+// 都能"出声"，客户拿到的是默认引擎的音质与计费，不读响应头就永远发现不了。
+// 反证方式：把 resolve.go 里的 model 分支改回 defaultModel，此测试立即变红。
+func TestResolveRejectsUnknownModel(t *testing.T) {
+	c := mustCatalog(t)
+	def := "eleven_multilingual_v2"
+
+	for _, bad := range []string{
+		"no-such-model",
+		"eleven_v33",          // 典型手误：多打一个 3
+		"eleven_multilingual", // 少了 _v2
+		"eleven_bogus_v9",     // 完全捏造的引擎名
+	} {
+		_, _, _, err := ResolveVoiceAndModel(bad, "rachel", c, def)
+		if err == nil {
+			t.Fatalf("模型 %q 应报错，实际被静默接受", bad)
+		}
+		// 错误信息必须能指导用户改对，否则等于没报错
+		if !strings.Contains(err.Error(), "可用引擎") {
+			t.Fatalf("模型 %q 的错误信息缺少可用引擎列表: %v", bad, err)
+		}
+	}
+
+	// tts-1 等 OpenAI 兼容名是【有意注册】的别名，必须放行并映射到真实引擎。
+	// 它不属于「未知模型」—— 这里单独断言，避免把兼容设计与静默回退混为一谈。
+	if _, m, _, err := ResolveVoiceAndModel("tts-1", "rachel", c, def); err != nil {
+		t.Fatalf("tts-1 是注册过的兼容名，不应被拒: %v", err)
+	} else if m == "tts-1" {
+		t.Fatalf("tts-1 应映射成真实引擎，不能原样发给上游")
+	}
+
+	// 反过来：合法引擎名必须放行，不能误伤
+	for _, good := range []string{"eleven_v4", "eleven_v3", "eleven_multilingual_v2",
+		"eleven_turbo_v2_5", "eleven_flash_v2_5"} {
+		if _, _, _, err := ResolveVoiceAndModel(good, "rachel", c, def); err != nil {
+			t.Fatalf("合法引擎 %q 被误拒: %v", good, err)
+		}
+	}
+
+	// 空 model 仍走默认引擎：不少 OpenAI SDK 不传 model 字段
+	_, mid, _, err := ResolveVoiceAndModel("", "rachel", c, def)
+	if err != nil {
+		t.Fatalf("空 model 不应报错: %v", err)
+	}
+	if mid != def {
+		t.Fatalf("空 model 应回退默认 %q，实际 %q", def, mid)
 	}
 }

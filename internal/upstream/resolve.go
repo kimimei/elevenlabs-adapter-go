@@ -124,15 +124,37 @@ func ResolveVoiceAndModel(model, voice string, cat *voices.Catalog, defaultModel
 		return picked, mid, extra, nil
 	}
 
-	if strings.HasPrefix(model, "eleven_") || model == "elevenlabs-tts" {
+	// 引擎名必须精确命中目录里的白名单，不能用 "eleven_" 前缀放行。
+	// 前缀判断会把 eleven_v33 / eleven_multilingual（手误）全当合法引擎透传给上游，
+	// 上游要么 400 要么悄悄用别的引擎，两种都让客户难以定位问题。
+	for _, eng := range cat.EngineIDs {
+		if model == eng {
+			return voiceID, model, Extra{}, nil
+		}
+	}
+	// elevenlabs-tts 是历史兼容名（Python 版也认），单独放行
+	if model == "elevenlabs-tts" {
 		return voiceID, model, Extra{}, nil
 	}
 
-	mid := defaultModel
+	// 未知 model 必须报错，不能回退到默认模型。
+	//
+	// 原实现是 `mid := defaultModel`，任何不认识的名字都静默用 multilingual_v2 出声。
+	// 后果：客户把 eleven_v3 拼成 eleven_v33，拿到的是 v2 的音质和计费，
+	// 客户端不读 X-ElevenLabs-Model 头就永远发现不了，事后对账也无法归因。
+	// 只在 ModelAlias 里精确命中才放行，其余一律 400。
 	if m, ok := cat.ModelAlias[model]; ok {
-		mid = m
+		return voiceID, m, Extra{}, nil
 	}
-	return voiceID, mid, Extra{}, nil
+
+	// 兜底：请求既不是引擎名、也不是别名、也不是 ModelAlias 命中的键。
+	// 允许显式声明「用默认模型」的调用方走空 model 路径（不少 SDK 不传 model）。
+	if strings.TrimSpace(model) == "" {
+		return voiceID, defaultModel, Extra{}, nil
+	}
+
+	return "", "", Extra{}, fmt.Errorf("未知模型 %q：可用引擎 %s；也可传空 model 使用默认 %s",
+		model, strings.Join(cat.EngineIDs, " / "), defaultModel)
 }
 
 // TTSURL 组装上游合成地址。voice_id 再 quote 一次作为双保险：
