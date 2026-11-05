@@ -273,3 +273,49 @@ func TestElevenlabsTtsAliasResolvesToRealEngine(t *testing.T) {
 		t.Fatalf("应映射到 eleven_* 引擎名，实际 %q", model)
 	}
 }
+
+// OpenAI 官方 6 个音色必须全部可解析。
+//
+// 为什么要有这条：几乎所有 work 工具（Dify / n8n / Coze / LangChain）接入
+// OpenAI 兼容 TTS 时都默认传 voice="alloy"（OpenAI 文档示例值）。
+// 这 6 个名字若解析失败，接入方第一次调用就 400，而他们并不知道
+// 我方有自己的音色体系 —— 结论会变成"这个适配器不能用"。
+//
+// 反证：从 voices.json 删掉任一 OpenAI 音色映射，此测试立即变红。
+func TestOpenAIVoiceNamesAllResolve(t *testing.T) {
+	c := mustCatalog(t)
+	cases := []string{"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
+	for _, name := range cases {
+		// 关键：OpenAI 的 voice 名在我方模型里注册成 aliases，
+		// 要作为 model 参数传入才会走 aliases 分支解析出 voice_id。
+		// 用 voice 参数传是查不到 —— VoiceToID 只认 ElevenLabs 音色名。
+		id, model, _, err := ResolveVoiceAndModel(name, "", c, "eleven_v3")
+		if err != nil {
+			t.Fatalf("OpenAI 音色 %q 应可解析，实际报错: %v", name, err)
+		}
+		if id == "" {
+			t.Fatalf("OpenAI 音色 %q 解析出的 voice_id 为空", name)
+		}
+		if model == "" || model == "tts-1" {
+			t.Fatalf("OpenAI 音色 %q 应落到真实引擎，实际 model=%q", name, model)
+		}
+	}
+}
+
+// OpenAI 音色名通过 body.voice 传入也必须能解析。
+//
+// 这条比上一条更贴近真实场景：标准客户端（Dify / n8n / OpenAI SDK）
+// 传的是 body.voice，走 VoiceToID，而不是 model 字段。
+// 反证：把 catalog.go 中 VoiceToID 的 Aliases 分支删掉，此测试立即变红。
+func TestOpenAIVoiceViaVoiceField(t *testing.T) {
+	c := mustCatalog(t)
+	for _, name := range []string{"alloy", "echo", "fable", "onyx", "nova", "shimmer"} {
+		id, _, _, err := ResolveVoiceAndModel("tts-1", name, c, "eleven_v3")
+		if err != nil {
+			t.Fatalf("voice=%q 应可解析，实际: %v", name, err)
+		}
+		if id == "" {
+			t.Fatalf("voice=%q 应解析出 voice_id，实际为空", name)
+		}
+	}
+}

@@ -286,14 +286,27 @@ func TestSpeedOutOfOpenAIRangeRejected(t *testing.T) {
 	}
 }
 
-func TestStreamReturns501(t *testing.T) {
+// stream=true 应被忽略并正常返回完整音频，而不是 501。
+//
+// 历史：这里原本断言返回 501。但大量 work 工具（Dify / n8n / Agent 框架）
+// 调用 OpenAI 兼容 TTS 时会默认带 "stream": true，501 会让接入方首次调用即失败，
+// 而他们只是照抄了 OpenAI 默认参数，报错对他们没有指导意义。
+// 现在改为：忽略该参数、照常返回 audio/mpeg，并用 X-Stream-Ignored 显式告知。
+// 反证：把 501 分支加回去，此测试立即变红。
+func TestStreamIsIgnoredNotRejected(t *testing.T) {
 	h := newHarness(t, nil, nil)
 	body, _ := json.Marshal(map[string]any{
 		"model": "eleven_multilingual_v2", "voice": "rachel", "input": "你好", "stream": true,
 	})
 	rec := h.post(t, string(body), nil)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("状态码 = %d，期望 501", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream=true 应被忽略并按非流式返回 200，实际 %d", rec.Code)
+	}
+	if got := rec.Header().Get("X-Stream-Ignored"); got != "true" {
+		t.Fatalf("应通过 X-Stream-Ignored 告知调用方，实际 = %q", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "audio/") {
+		t.Fatalf("应返回音频，Content-Type = %q", ct)
 	}
 }
 

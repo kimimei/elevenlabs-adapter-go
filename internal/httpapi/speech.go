@@ -148,12 +148,16 @@ func (a *App) handleSpeech(c *gin.Context) {
 			record(400, nil, nil, "input 超长"))
 		return
 	}
+	// stream=true 不再返回 501，改为「忽略该参数，按非流式返回」。
+	//
+	// 原因（2026-11-05）：大量 work 工具（Dify / n8n / 各类 Agent 框架）在调用
+	// OpenAI 兼容 TTS 时会默认带 "stream": true。直接 501 会让接入方第一次调用就失败，
+	// 且报错信息对他们没有指导意义 —— 他们只是照抄了 OpenAI 的默认参数。
+	// 这类客户端拿到完整的 audio/mpeg 音频流同样能正常播放，丢的只是首包延迟。
+	// 用 X-Stream-Ignored 头显式告知，避免「以为在流式、其实不是」这种静默差异。
 	if in.Stream {
-		writeErr(c, http.StatusNotImplemented, "MVP 暂不支持流式（stream=true），请使用非流式请求",
-			"not_implemented",
-			"去掉请求体里的 \"stream\": true，或改成 false 走非流式",
-			record(501, nil, nil, "stream 不支持"))
-		return
+		setHeader(c, "X-Stream-Ignored", "true")
+		setHeader(c, "X-Stream-Reason", "adapter returns complete audio, not chunked stream")
 	}
 
 	fmtSpec, ok := upstream.Formats[in.ResponseFormat]

@@ -286,6 +286,16 @@ func (c *Catalog) VoiceToID(name string) string {
 	if vid, ok := c.Voices[name]; ok && vid != "" {
 		return vid
 	}
+	// 也要能从 Aliases 取。
+	//
+	// 原因（2026-11-05）：OpenAI 的 6 个官方音色（alloy/echo/fable/onyx/nova/shimmer）
+	// 是按「别名 + 绑定 voice_id」注册的，落在 Aliases 里而不是 Voices 里。
+	// 标准客户端调用 TTS 时传的是 body.voice（不是 model），走的就是 VoiceToID，
+	// 只查 Voices 会导致 voice:"alloy" 解析为空 → 400，
+	// 于是所有按 OpenAI 规范接入的 work 工具开箱即挂。
+	if spec, ok := c.Aliases[name]; ok && spec.VoiceID != "" {
+		return spec.VoiceID
+	}
 	if utf8.RuneCountInString(name) >= 15 && !strings.Contains(name, " ") {
 		return name
 	}
