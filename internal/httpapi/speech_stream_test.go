@@ -194,3 +194,64 @@ func TestStreamTrueWithoutFormatIsMarkedIgnored(t *testing.T) {
 		t.Fatalf("没有 stream_format=sse 就不算流式，得到 %v", row["stream"])
 	}
 }
+
+// 上游中途断开时必须发 event: error —— 与 Python 版同名同载荷。
+//
+// 这条专门钉事件名：Go 版最初写的是 `speech.audio.error`，Python 版是 `error`。
+// 名字不一致时，客户从 Python 切到 Go 不会报错，只会把半截音频当完整结果播出去 ——
+// 属于「静默降级」里最难查的一类。
+func TestStreamBrokenUpstreamEmitsPythonCompatibleError(t *testing.T) {
+	h := newHarness(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		// 声称 100 字节却只写 3 字节：客户端读流时拿到 unexpected EOF，
+		// 正好模拟「上游写到一半断线」
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("AAA"))
+	})
+	rec := h.post(t, streamBody, nil)
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "event: error\n") {
+		t.Fatalf("上游中断必须发 event: error，实际：%s", body)
+	}
+	if strings.Contains(body, "speech.audio.error") {
+		t.Fatalf("不能自创 speech.audio.error：Python 版是 error，客户换实现会漏判失败")
+	}
+	if !strings.Contains(body, `"code":"upstream_error"`) {
+		t.Fatalf("error 载荷缺 code=upstream_error：%s", body)
+	}
+
+	row := h.lastRow(t)
+	if status, _ := row["status"].(float64); int(status) != 502 {
+		t.Fatalf("上游中断应记 502，得到 %v", row["status"])
+	}
+}
+
+// done 事件必须带 usage，且与 Python 版同构（客户端按 OpenAI TTS 习惯读它）
+func TestStreamDoneCarriesUsage(t *testing.T) {
+	h := newHarness(t, nil, streamingUpstream([]string{"AAA"}, 200, "3"))
+	rec := h.post(t, streamBody, nil)
+	events, _, _ := decodeSSE(t, rec.Body.String())
+
+	var done map[string]any
+	for _, e := range events {
+		if e["type"] == "speech.audio.done" {
+			done = e
+		}
+	}
+	if done == nil {
+		t.Fatalf("缺少 done 事件")
+	}
+	usage, ok := done["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("done 事件缺 usage：%v", done)
+	}
+	// "你好世界" = 4 个字符；Python 版把原始字符数放进 input_tokens/total_tokens
+	if n, _ := usage["input_tokens"].(float64); int(n) != 4 {
+		t.Fatalf("input_tokens 应为 4，得到 %v", usage["input_tokens"])
+	}
+	if n, _ := usage["total_tokens"].(float64); int(n) != 4 {
+		t.Fatalf("total_tokens 应为 4，得到 %v", usage["total_tokens"])
+	}
+}

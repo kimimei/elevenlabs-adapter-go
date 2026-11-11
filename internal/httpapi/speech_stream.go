@@ -41,11 +41,6 @@ type deltaEvent struct {
 	Audio string `json:"audio"`
 }
 
-type errorEvent struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
-}
-
 // sseFrame 组装一个 SSE 事件。
 //
 // 事件名（event:）和 JSON 里的 type 两处都写：经 new-api 转发时网关会把
@@ -161,15 +156,30 @@ func (a *App) handleSpeechStream(c *gin.Context, r streamReq) {
 			w.Flush()
 		}
 		if rerr == io.EOF {
-			w.Write(sseFrame("speech.audio.done", map[string]string{"type": "speech.audio.done"}))
+			// done 带上 usage，与 Python 版的载荷逐字段一致：客户端在两种实现之间
+			// 切换时，按 OpenAI TTS 习惯读 usage 的代码不该突然拿到空对象。
+			w.Write(sseFrame("speech.audio.done", map[string]any{
+				"type": "speech.audio.done",
+				"usage": map[string]any{
+					"input_tokens":        r.RawChars,
+					"output_tokens":       0,
+					"total_tokens":        r.RawChars,
+					"input_token_details": map[string]any{"text_tokens": r.RawChars, "audio_tokens": 0},
+				},
+			}))
 			w.Flush()
 			break
 		}
 		if rerr != nil {
 			outcome = 502
 			failure = "上游流中断：" + rerr.Error()
-			w.Write(sseFrame("speech.audio.error", errorEvent{
-				Type: "speech.audio.error", Message: failure,
+			log.Printf("upstream stream broken (request %s): %v", r.RID, rerr)
+			// 事件名用 "error" 而不是 "speech.audio.error"：Python 版就是 "error"，
+			// 客户换实现时不该因为事件名不同而漏判失败。详细原因进日志，不进响应体
+			// （与 Python 一致：对端只需知道"这段音频不完整"）。
+			w.Write(sseFrame("error", map[string]any{
+				"type":  "error",
+				"error": map[string]any{"message": "上游音频流中断", "type": "upstream_error", "code": "upstream_error"},
 			}))
 			w.Flush()
 			break
