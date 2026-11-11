@@ -111,6 +111,15 @@ def _json(b):
         return {"_raw_len": len(b)}
 
 
+def _hget(headers, name):
+    """HTTP 头名大小写不固定（Go 会规范化成 X-Stream-Ignored，urllib 原样保留）。"""
+    low = name.lower()
+    for k, v in (headers or {}).items():
+        if k.lower() == low:
+            return v
+    return None
+
+
 def check(name, ok, detail=""):
     results.append((name, bool(ok), detail))
 
@@ -198,8 +207,43 @@ def run_mock(port):
     st, _, b = req(port, "GET", "/v1/audio/speech/jobs/deadbeefdeadbeef")
     check("不存在的 job → 404", st == 404, str(st))
 
-    st, _, b = req(port, "POST", "/v1/audio/speech", {"model": "zh-boyin", "input": "x", "stream": True})
-    check("stream=true → 501", st == 501, str(st))
+    # stream=true 单独出现**不再报 501**（v0.5.0 起支持 SSE）。
+    # 但 OpenAI 的 stream 字段不足以表达「要 MP3 流」，所以它被忽略：
+    # 返回整段音频 + X-Stream-Ignored，说明「你要的流式没生效」。
+    # 这条断言跟着契约走（docs/CONTRACT.md §2.1），别按旧行为改回去。
+    st, h, b = req(port, "POST", "/v1/audio/speech",
+                   {"model": "zh-boyin", "input": "x", "stream": True, "response_format": "mp3"})
+    ignored = _hget(h, "X-Stream-Ignored")
+    check("stream=true 被忽略（200 而非 501）且带说明头",
+          st == 200 and ignored == "true", "status=%s ignored=%s" % (st, ignored))
+
+    # 真流式：显式 stream_format=sse，逐块 delta，以 done 收尾。
+    # 只断言状态码是不够的 —— 整段音频也能返回 200，区别在「有没有多块」。
+    st, h, raw = req(port, "POST", "/v1/audio/speech",
+                     {"model": "zh-boyin", "input": "流式验收文本",
+                      "response_format": "mp3", "stream_format": "sse"}, raw=True)
+    ctype = (_hget(h, "Content-Type") or "").split(";")[0]
+    types, audio_len = [], 0
+    for line in raw.decode("utf-8", "replace").splitlines():
+        if not line.startswith("data: "):
+            continue
+        try:
+            obj = json.loads(line[6:])
+        except Exception:
+            continue
+        types.append(obj.get("type"))
+        audio_len += len(obj.get("audio") or "")
+    check("stream_format=sse → SSE 流且以 done 收尾",
+          st == 200 and ctype == "text/event-stream"
+          and types.count("speech.audio.delta") >= 2
+          and types[-1:] == ["speech.audio.done"] and audio_len > 100,
+          "status=%s ctype=%s delta=%d end=%s bytes=%d" % (
+              st, ctype, types.count("speech.audio.delta"), types[-1:], audio_len))
+
+    # 非法 stream_format 必须报错，不能静默降级成整段音频
+    st, _, b = req(port, "POST", "/v1/audio/speech",
+                   {"model": "zh-boyin", "input": "x", "stream_format": "bogus"})
+    check("stream_format=bogus → 400", st == 400, str(st))
 
     # ---- 异步全生命周期 ----
     st, _, b = req(port, "POST", "/v1/audio/speech/jobs",
