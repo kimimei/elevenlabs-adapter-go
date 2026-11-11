@@ -4,6 +4,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 GOFLAGS := -trimpath
 
 .PHONY: all build build-linux build-arm64 test test-race vet fmt tidy check smoke acceptance crash-check docker clean \
+        release-check release-check-selftest \
         m6 m6-jobs m6b m6b-real m6b-matrix m6b-cost voice-lin-check voice-lin-alternatives voice-verify voice-verify-dry
 
 all: build
@@ -38,6 +39,17 @@ tidy:
 ## 提交前的一站式门禁：格式 + 静态检查 + 单测 + 两条黑盒回归
 check: vet test
 	gofmt -l . | (! grep .) || (echo "gofmt 有未格式化文件，先跑 make fmt" && false)
+
+## 发布前门禁：扫「会被提交的内容」（已跟踪 + 未忽略的新文件）和 git 历史，
+## 拦真实 IP / 内部域名 / 令牌 / 私钥 / 本机路径 / 填了真值的 .env.example。
+## 规则与 Python 版 scripts/release_check.py 同源，实现在 internal/releasecheck。
+## 私有域名清单放 .release-check.local（不进仓库），CI 里用 RELEASE_CHECK_INTERNAL_HOSTS 注入。
+release-check:
+	go run ./cmd/release-check
+
+## 门禁自身的反证：造一份故意违规的仓库，确认每条规则真的会红
+release-check-selftest:
+	go run ./cmd/release-check -self-test
 
 ## 冒烟：不起真实上游，覆盖同步 + 异步 + 试听 + 一次真实重启
 ## 逻辑只在 scripts/smoke.sh 里写一份 —— 两处实现必定漂移

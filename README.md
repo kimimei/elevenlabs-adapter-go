@@ -344,6 +344,55 @@ CONTRACT §7 D17/D18，报告里仍然逐条列出 —— 白名单能吃掉的�
 
 ---
 
+## 发布前门禁：敏感信息扫描
+
+公开仓库的泄露很少是「有人故意贴了个 Key」，多是三类小事：
+示例文件被顺手填了真值、调试脚本里留了个真实 IP、文件删了但历史还在。
+`make release-check` 把这三类做成必检项。
+
+```bash
+make release-check            # 报告；有阻塞项返回 1
+make release-check-selftest   # 门禁自身的反证：造一份故意违规的仓库，确认规则会红
+```
+
+扫描范围是**「会被提交的内容」**：已跟踪的 + 未跟踪但没被 `.gitignore` 排除的。
+后者是刻意的 —— 门禁最该生效的时刻就是提交之前，那时新文件还没 `git add`。
+被忽略的日志、账本、编译产物不扫，它们本来就不会上传。
+
+| 检查 | 级别 | 说明 |
+|---|---|---|
+| 真实 IP | BLOCK | 只放行回环、RFC 5737 文档网段、docker 默认网桥 |
+| 内部域名 | BLOCK | 通用后缀内置；项目专属域名从 `.release-check.local` 或 `RELEASE_CHECK_INTERNAL_HOSTS` 读 |
+| 令牌 / 私钥 | BLOCK | `sk-…`、`AKIA…`、PEM 私钥块；报告只回显前 6 位，避免二次泄露 |
+| `.env.example` 被填了值 | BLOCK | `*_KEY=` / `*_TOKEN=` 必须留空；开关类字面量（`0`/`1`/`true`）放行 |
+| 本机路径 | BLOCK | `C:/Users/…`、`/home/<user>/`，对读者无价值且暴露开发环境 |
+| LICENSE 版权主体 | BLOCK | Apache 模板里的 `[yyyy] [name of copyright owner]` 没填，等于许可证是空的 |
+| `.gitignore` 覆盖 | BLOCK | 必须忽略 `.env`、`/logs/`、`*.mp3`、`*.wav` |
+| 音频入仓 | BLOCK | 只允许 `examples/demo/`，单文件 ≤ 800 KB、合计 ≤ 4 MB、并在该目录 README 登记 |
+| **git 历史** | BLOCK | 以上各项在历史提交里再查一遍。`git rm` 删不掉历史，公开的那一刻历史就是公开的 |
+| 文档缺失 | WARN | `SECURITY.md`、`docs/CONTRACT.md` |
+| `TODO` 类占位符 | WARN | 代码注释里的待办不算 |
+
+### 私有域名为什么不写在代码里
+
+门禁得知道哪些域名算内部，但**把它们写进源码本身就是一次泄露** ——
+和它要防的是同一件事。所以清单放在仓库外：
+
+```bash
+# 仓库根，已在 .gitignore 里；一行一个后缀
+echo "your-corp.example" > .release-check.local
+```
+
+CI 里改用 `RELEASE_CHECK_INTERNAL_HOSTS` 环境变量注入（见 `.github/workflows/ci.yml`）；
+没配置时只跑通用后缀，其余检查照常。
+
+### 门禁自身的免检区
+
+`internal/releasecheck/` 里有规则的反证样例（假 IP、假令牌、假私钥），
+所以它不参与内容扫描 —— 否则门禁会永远在报自己。
+这个口子由 `RuleGatePackageIntegrity` 兜住：该目录只允许出现已知的三个文件，
+多一个就 BLOCK，免得有人把真东西塞进免检区。
+
 ## 部署注意
 
 **这个适配器不自带鉴权。** 它设计为位于中转站之后，由面板负责用户认证与扣费。

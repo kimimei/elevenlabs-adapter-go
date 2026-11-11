@@ -21,6 +21,18 @@ race.log
 .env
 .env.local
 
+# 发布门禁的本地内部域名清单。
+# 里面是本项目的真实域名，写进仓库就与本门禁的目的自相矛盾 —— 只留在本机。
+.release-check.local
+
+# 媒体文件：测试音频体积大、版权不明，不该进仓库。
+# 演示音频例外 —— 放 examples/demo/ 并在该目录 README 登记场景与文案。
+# （发布门禁 make release-check 会检查「音频只能出现在 examples/demo 且已登记」）
+*.mp3
+*.wav
+!examples/demo/*.mp3
+!examples/demo/*.wav
+
 # 编辑器
 .idea/
 .vscode/

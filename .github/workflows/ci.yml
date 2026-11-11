@@ -49,6 +49,33 @@ jobs:
       - name: 崩溃恢复回归
         run: python scripts/crash_recovery_check.py
 
+  # 发布前门禁单独一个 job：它要扫 git 历史，必须 fetch-depth: 0。
+  # 混在主 job 里只能拿到浅克隆，历史扫描就只看得到最近一个提交 ——
+  # 那种「通过」是假通过，比不扫更危险。
+  release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 先证明规则有效，再用它下结论。顺序反了，一个坏掉的门禁
+      # 也会告诉你「全部通过」。
+      - name: 门禁反证
+        run: go run ./cmd/release-check -self-test
+
+      - name: 敏感信息扫描（内容 + 历史）
+        run: go run ./cmd/release-check
+        env:
+          # 私有域名清单不进仓库，CI 里走 secrets。
+          # 未配置时只跑通用规则，不影响其余检查。
+          RELEASE_CHECK_INTERNAL_HOSTS: ${{ secrets.RELEASE_CHECK_INTERNAL_HOSTS }}
+
   # test-race 单独一个 job：它需要 CGO 与 C 工具链，失败原因与普通测试不同，
   # 混在一起会让人分不清「逻辑错了」还是「环境缺工具」。
   race:
