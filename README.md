@@ -94,6 +94,53 @@ HTTP 头只允许 latin-1，中文写进去会让**整个响应**崩掉（不是
 
 ---
 
+## 流式输出（SSE）
+
+非流式要等整段合成完成才返回；流式让首块音频在合成过程中就到达播放器。
+实测（生产 8124，真上游，18 字中文）：非流式 1825 ms，流式首块 **801 ms**。
+
+```bash
+curl -N -X POST http://127.0.0.1:8124/v1/audio/speech \
+  -H "Authorization: Bearer sk_渠道密钥" -H 'Content-Type: application/json' \
+  -d '{"model":"zh-boyin","input":"你好，这是流式合成。","response_format":"mp3","stream_format":"sse"}'
+```
+
+```
+event: speech.audio.delta
+data: {"type":"speech.audio.delta","audio":"SUQzBAA..."}
+
+event: speech.audio.done
+data: {"type":"speech.audio.done"}
+```
+
+| 事件 | 含义 |
+|---|---|
+| `speech.audio.delta` | 一段 MP3 字节的 base64，按序拼接即完整音频 |
+| `speech.audio.done` | 正常结束，**收到它才算完整**。载荷带 `usage`（与 Python 版同构） |
+| `error` | 上游中途断了。状态码早已发出 200，只能靠这个事件知道失败 |
+
+**四个必须知道的约束**
+
+1. **只有 `stream_format: "sse"` 能开流式。** `stream: true` 不生效 —— 返回整段音频并带
+   `X-Stream-Ignored: true`。这不是漏做：大量 Agent 框架照抄 OpenAI 默认参数会带 `stream: true`，
+   直接 501 会让它们第一次调用就失败，而那些客户端拿到完整音频本来也能播。
+2. **只支持 `response_format=mp3`。** WAV 要写完 RIFF 头才知道总长度，伪造头会让播放器读到 0 时长，
+   比直接拒绝更难排查。传别的格式直接 400。
+3. **经 new-api 转发时 `event:` 行会被网关剥掉**，客户端只剩 `data: {"type":...}`。
+   适配器两处都写，所以直连可按事件名解析、经网关可按 JSON 里的 `type` 分派。
+4. **流式不省钱。** 上游按完整文本计费，客户端中途断开也照扣，我们只是把账本记成 `499` 而非 `502`。
+   要省钱请缩短文本，不是掐连接。
+
+**记账**：流式与非流式写同一本账，用 `stream` / `stream_format` 标记，可据此算流式占比与首块 SLA。
+成功时记上游真实积分 `up_credits`（拿不到记 `null`，绝不拿输入字符数冒充）；结局分 `200` 正常结束、
+`499` 客户端断开、`502` 上游中断。
+
+**一个容易静默漏掉的点**：ElevenLabs 的流式端点是 `/text-to-speech/{id}/stream`。少写 `/stream`
+它照样返回 200，只是整段返回 —— 看起来「成功」，实际一点没流。仓库里有条测试专门钉这个后缀
+（`TestStreamSSEHitsStreamEndpoint`），删掉后缀会立刻变红。
+
+---
+
 ## 长文本必须走异步
 
 同步接口在客户第一单就会失败：几千字的合成远超网关 60~120 秒的超时。

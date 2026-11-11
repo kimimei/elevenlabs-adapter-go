@@ -32,7 +32,7 @@ new-api **自己数**字符，不读适配器的任何 `X-Usage-*` 头。
 
 | 方法 | 路径 | 状态 | 说明 |
 |---|---|---|---|
-| POST | `/v1/audio/speech` | ✅ 已实现 | 文本转语音（非流式） |
+| POST | `/v1/audio/speech` | ✅ 已实现 | 文本转语音；`stream_format=sse` 走流式，其余为非流式 |
 | GET | `/v1/models` | ✅ | OpenAI 格式模型列表，默认只含标准引擎 |
 | GET | `/v1/presets` | ✅ | 补充包清单与启用状态 |
 | GET | `/v1/voices` | ✅ | 音色目录，`with_preview=1` 带试听链接 |
@@ -59,13 +59,47 @@ new-api **自己数**字符，不读适配器的任何 `X-Usage-*` 头。
 | `voice` | string \| null | 否 | null | 音色名或 10–64 位 `voice_id` |
 | `response_format` | string | 否 | `mp3` | `mp3`/`opus`/`wav`/`pcm`；`aac`/`flac` 显式 400 |
 | `speed` | number \| numeric-string | 否 | null | `0.25–4.0`，超范围 400；下发前钳制到 `0.7–1.2` |
-| `stream` | bool \| "true"/"false" \| 0/1 | 否 | false | `true` → 501 |
+| `stream` | bool \| "true"/"false" \| 0/1 | 否 | false | **不控制流式**。`true` 时忽略该参数、按非流式返回，并回 `X-Stream-Ignored: true`（不再 501） |
+| `stream_format` | string | 否 | `audio` | `audio`（整段）或 `sse`（流式）。其它值 400。`sse` 时 `response_format` 必须是 `mp3` |
 | `text_clean` | string | 否 | 服务端配置 | `off`/`safe`/`normalize`，**只能加强不能削弱** |
 
 **宽松类型（pydantic lax 兼容，Go 版必须实现）**：`speed` 传字符串 `"1.0"`、`stream` 传 `"true"` 或 `1`，
 Python 版都接受。Go 的 `encoding/json` 默认会报错 —— 直接照着写就是一次全量客户故障。
 
 **未知字段**：忽略，不报错（两侧一致）。
+
+### 2.1 流式（`stream_format: "sse"`）
+
+**为什么不是 `stream: true`**：2026-11-05 起 `stream: true` 由「501 拒绝」改为「忽略并整段返回」。
+Dify / n8n / 各类 Agent 框架调用 OpenAI 兼容 TTS 时会默认带上它，501 会让接入方第一次调用就失败，
+而它们拿到完整 `audio/mpeg` 本来也能播放，丢的只是首包延迟。真要流式必须显式传 `stream_format: "sse"`
+（该字段与 new-api `AudioRequest.StreamFormat` 对齐）。
+
+**上游端点**：`/text-to-speech/{voice_id}/stream`。少写 `/stream` 后缀上游照样 200、整段返回，
+是最难发现的一类失败，`TestStreamSSEHitsStreamEndpoint` 专门钉这一条。
+
+**响应**：`200` + `Content-Type: text/event-stream; charset=utf-8`，另有 `Cache-Control: no-cache`、
+`X-Accel-Buffering: no`（避免反代攒包）。
+
+| 事件名（`event:`） | JSON `type` | 载荷 |
+|---|---|---|
+| `speech.audio.delta` | 同左 | `{"type","audio"}`，`audio` 是 MP3 字节的 base64 |
+| `speech.audio.done` | 同左 | `{"type","usage"}`，`usage` 结构与 Python 版逐字段一致；**收到才代表完整** |
+| `error` | `error` | `{"type","error":{"message","type","code"}}`，仅上游中途断开 |
+
+> 失败事件名就是 `error`（不是 `speech.audio.error`）。Python 版用的是 `error`，
+> 两侧必须同名 —— 否则客户换实现时不会报错，只会把半截音频当完整结果播出去。
+> `TestStreamBrokenUpstreamEmitsPythonCompatibleError` 钉这一条。
+
+事件名与 JSON `type` **两处都写**：经 new-api 转发时网关会剥掉 `event:` 行只留 `data:`，
+只写一处就会有一侧拿不到事件类型。
+
+**状态码时机**：先把上游响应头拿回来再切 SSE。所以上游非 2xx 时还能正常返回 JSON 错误
+（`Content-Type: application/json`）；一旦开始刷字节，状态码就固定 200，后续失败只能发
+`speech.audio.error`。客户端必须把「缺少 `done`」当作未完成，不能只看 HTTP 状态。
+
+**结局记账**：`200` 正常结束 / `499` 客户端断开 / `502` 上游中断。三者都写账本行，
+`bill_chars` 仅 200 计费（`499` 上游可能已扣费，留痕但不对客户收费）。
 
 ---
 
@@ -87,6 +121,8 @@ Python 版都接受。Go 的 `encoding/json` 默认会报错 —— 直接照着
 | `X-Text-Saved-Chars` | `removed > 0` | `raw − sent`（≥0） |
 | `X-Speed-Clamped` | 发生钳制 | 钳制后的值，例 `1.2` |
 | `X-Mock` / `X-Mock-Format` / `X-Mock-Format-Mismatch` | MOCK 模式 | 见 §6 |
+| `X-Stream-Ignored` | `stream=true` 但 `stream_format≠sse` | `true`，表示「要了流式但按整段返回」 |
+| `X-Stream-Reason` | 同上 | `stream_format is not sse; returning complete audio` |
 
 **硬约束：头值只能是 latin-1。**
 中文写进 HTTP 头会让**整个响应**崩掉（不是只丢那个头）。所以「账本用的中文说明」与
@@ -121,8 +157,11 @@ Go 版直接写底层 map 绕过。
 | `5xx` | 502 | — |
 | 其它 | 400 | — |
 
-**适配器自身状态码**：`400` 参数/校验、`401` 缺 Key、`403` IP 白名单、`413` 请求体超限、
-`429` 并发满、`501` stream=true、`502` 上游网络/崩溃。
+**适配器自身状态码**：`400` 参数/校验（含 `stream_format` 不是 `audio`/`sse`、`sse` 配了非 mp3）、
+`401` 缺 Key、`403` IP 白名单、`413` 请求体超限、`429` 并发满、
+`501` **已废弃**（旧版对 `stream=true` 返回，现改为忽略并整段返回，见 §2.1）、`502` 上游网络/崩溃。
+
+`499` 只出现在账本，不会出现在响应里：HTTP 头早已发出 200，客户端断开无法回写状态码。
 
 **异步任务专用**：`202` 已受理、`404` 未开启 / job_id 不存在 / 已过期、`409` 任务未完成或已终态
 （`error.code` 一律 `invalid_request_error`，队列满才是 `rate_limit_error`，与 Python 版逐字一致）。
@@ -142,8 +181,12 @@ Go 版直接写底层 map 绕过。
 | `ts` | int | Unix 秒 |
 | `rid` | string | 请求 id（异步任务为 `job:<id>`） |
 | `up_rid` | string \| null | 上游 request-id |
-| `model` | string \| null | 显式传 voice 时记 voice |
+| `model` | string \| null | 显式传 voice 时记 voice（客户端原值，可能是音色别名） |
+| `model_id` | string \| null | 实际下发上游的模型 id（如 `eleven_v3`）。**按档位算成本只能看这个字段** |
 | `voice` | string \| null | 解析后的 voice_id |
+| `stream` | bool | 是否走了 SSE 流式路径 |
+| `stream_format` | string | 请求的 `stream_format`，缺省 `audio` |
+| `stream_ignored` | bool | 客户传了 `stream=true` 但没开 sse（实际返回的是整段音频） |
 | `in_chars` | int | **客户提交的原始长度（不 strip）** = 计费依据 |
 | `sent_chars` | int | **实际送上游合成的长度** = 成本依据 |
 | `bill_chars` | int | 向客户收费的数量（按 `ADAPTER_BILLING_MODE`） |
