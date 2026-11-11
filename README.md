@@ -110,7 +110,7 @@ event: speech.audio.delta
 data: {"type":"speech.audio.delta","audio":"SUQzBAA..."}
 
 event: speech.audio.done
-data: {"type":"speech.audio.done"}
+data: {"type":"speech.audio.done","usage":{"input_tokens":12,"output_tokens":0,"total_tokens":12,...}}
 ```
 
 | 事件 | 含义 |
