@@ -54,9 +54,9 @@ new-api **自己数**字符，不读适配器的任何 `X-Usage-*` 头。
 
 | 字段 | 类型 | 必填 | 默认 | 约束 |
 |---|---|---|---|---|
-| `model` | string | 否 | `eleven_multilingual_v2` | 引擎名 / 别名 / OpenAI 兼容名 |
+| `model` | string | 否 | `eleven_v3` | 引擎名 / 别名 / OpenAI 兼容名 |
 | `input` | string | **是** | — | 非空；清理后为空则 400 |
-| `voice` | string \| null | 否 | null | 音色名或 10–64 位 `voice_id` |
+| `voice` | string \| null | 视模型 | null | 音色名或 10–64 位 `voice_id`。**标准引擎必填**，缺省返 400「无法确定 voice_id」；用场景别名时由别名隐含 |
 | `response_format` | string | 否 | `mp3` | `mp3`/`opus`/`wav`/`pcm`；`aac`/`flac` 显式 400 |
 | `speed` | number \| numeric-string | 否 | null | `0.25–4.0`，超范围 400；下发前钳制到 `0.7–1.2` |
 | `stream` | bool \| "true"/"false" \| 0/1 | 否 | false | **不控制流式**。`true` 时忽略该参数、按非流式返回，并回 `X-Stream-Ignored: true`（不再 501） |
@@ -255,7 +255,7 @@ Go 版直接写底层 map 绕过。
 | `ELEVENLABS_API_KEY` | 空 | 兜底 Key（主路径是请求头透传） |
 | `ELEVENLABS_MOCK` | `0` | `1` = 返回静音 WAV，不消耗额度 |
 | `ELEVENLABS_VOICES_FILE` | 空 | 外部音色表（Go 版内置一份，此项覆盖） |
-| `ELEVENLABS_DEFAULT_MODEL` | `eleven_multilingual_v2` | — |
+| `ELEVENLABS_DEFAULT_MODEL` | `eleven_v3` | 未指定 `model` 时的引擎（与 Python 版一致；v2 需显式传） |
 | `ELEVENLABS_TIMEOUT` | `300` | 秒；实测约 33ms/字 |
 | `ELEVENLABS_MAX_RETRIES` | `0` | 仅 5xx/429/连接中断重试；**超时永不重试** |
 | `ADAPTER_HOST` / `ADAPTER_PORT` | `127.0.0.1` / `8123` | — |
