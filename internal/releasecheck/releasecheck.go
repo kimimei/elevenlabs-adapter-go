@@ -589,12 +589,65 @@ func RuleDocs(e *Env, r *Report) {
 	}{
 		{"README.md", Block, "首屏，没有它别人不知道这是什么"},
 		{"LICENSE", Block, "没有许可证等于默认保留一切权利"},
-		{"SECURITY.md", Warn, "漏洞报告渠道；缺了别人只能在 issue 里公开漏洞细节"},
+		{"SECURITY.md", Block, "漏洞报告渠道；缺了别人只能在公开 issue 里披露漏洞细节"},
 		{"docs/CONTRACT.md", Warn, "对外契约；两个实现靠它对齐"},
 	} {
 		if !has[d.name] {
 			r.Add(d.level, "文档缺失", d.name, "缺少 "+d.name+"（"+d.why+"）")
 		}
+	}
+	RuleSecurityContact(e, r)
+}
+
+// placeholderDomains 是「一看就没填」的域名。example.com 不在此列：
+// 它是 RFC 保留域名，但也可能是真实在用的域名。
+var placeholderDomains = map[string]bool{
+	"your-domain.com": true, "yourdomain.com": true, "domain.com": true,
+	"mydomain.com": true, "example-domain.com": true, "changeme.com": true,
+}
+
+// RuleSecurityContact 要求 SECURITY.md 给出**能用的**联系方式。
+//
+// 有文件但写着 security@your-domain.com，比没有更糟：它让人以为渠道是通的，
+// 报告发出去没人收，漏洞就一直躺在那里。
+func RuleSecurityContact(e *Env, r *Report) {
+	var s string
+	for _, f := range e.Files {
+		if f.Rel == "SECURITY.md" {
+			s = f.Text()
+		}
+	}
+	if s == "" {
+		return // 文件缺失已由 RuleDocs 报过，不重复
+	}
+
+	// Markdown 引用块常用来写「发布前记得换成真实邮箱」这类提示语，
+	// 里面的占位符是故意留的，不算没填。
+	var body strings.Builder
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), ">") {
+			continue
+		}
+		body.WriteString(ln)
+		body.WriteString("\n")
+	}
+
+	emailRe := regexp.MustCompile(`[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}`)
+	emails := uniq(emailRe.FindAllString(body.String(), -1))
+	if len(emails) == 0 {
+		r.Add(Block, "漏洞报告邮箱", "SECURITY.md", "没有找到任何邮箱地址")
+		return
+	}
+	for _, em := range emails {
+		dom := strings.ToLower(em[strings.IndexByte(em, '@')+1:])
+		if placeholderDomains[dom] {
+			r.Add(Block, "漏洞报告邮箱", "SECURITY.md", em+" 是占位符，换成真实可收信的邮箱")
+		}
+	}
+	// 邮箱之外的备份通道：邮箱换了人、离职、被墙都可能失效。
+	if !strings.Contains(s, "Report a vulnerability") && !strings.Contains(s, "Security Advisory") {
+		r.Add(Warn, "私密报告通道", "SECURITY.md",
+			"未提 GitHub 的 Security Advisory 入口，建议补上作为邮箱之外的备份通道")
 	}
 }
 

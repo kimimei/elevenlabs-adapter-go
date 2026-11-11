@@ -319,3 +319,47 @@ func e2With(e *Env, extra string) *Env {
 	all := append(append([]string{}, e.All...), extra)
 	return &Env{Root: e.Root, All: all}
 }
+
+// SECURITY.md 里写一个占位邮箱，比没有文件更糟：
+// 它让人以为渠道是通的，报告发出去没人收。
+func TestSecurityContactMustBeReal(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "SECURITY.md", "报告漏洞：security@your-domain.com\n")
+	e := envFromDir(dir)
+	r := &Report{}
+	RuleSecurityContact(e, r)
+	if !rulesOf(r)["漏洞报告邮箱"] {
+		t.Fatalf("占位邮箱没被拦下：%v", r.Items)
+	}
+
+	dir2 := t.TempDir()
+	write(t, dir2, "SECURITY.md", "有问题请提 issue\n")
+	e2 := envFromDir(dir2)
+	r2 := &Report{}
+	RuleSecurityContact(e2, r2)
+	if !rulesOf(r2)["漏洞报告邮箱"] {
+		t.Fatalf("没有邮箱的 SECURITY.md 没被拦下：%v", r2.Items)
+	}
+
+	// 反向：真实邮箱 + GitHub 私密通道，应完全放行
+	dir3 := t.TempDir()
+	write(t, dir3, "SECURITY.md",
+		"发到 someone@real-domain.net，或用 GitHub 的 Security → Report a vulnerability\n")
+	e3 := envFromDir(dir3)
+	r3 := &Report{}
+	RuleSecurityContact(e3, r3)
+	if len(r3.Items) != 0 {
+		t.Fatalf("合规 SECURITY.md 被误判：%v", r3.Items)
+	}
+
+	// 引用块里的占位符是「提示语」，不算没填
+	dir4 := t.TempDir()
+	write(t, dir4, "SECURITY.md",
+		"> 发布前把下面的邮箱换成真实地址\n\n联系人：ops@real-domain.net\n使用 GitHub 的 Report a vulnerability\n")
+	e4 := envFromDir(dir4)
+	r4 := &Report{}
+	RuleSecurityContact(e4, r4)
+	if len(r4.Items) != 0 {
+		t.Fatalf("提示语被误判成未填：%v", r4.Items)
+	}
+}

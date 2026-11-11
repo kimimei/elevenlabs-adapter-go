@@ -370,7 +370,8 @@ make release-check-selftest   # 门禁自身的反证：造一份故意违规的
 | `.gitignore` 覆盖 | BLOCK | 必须忽略 `.env`、`/logs/`、`*.mp3`、`*.wav` |
 | 音频入仓 | BLOCK | 只允许 `examples/demo/`，单文件 ≤ 800 KB、合计 ≤ 4 MB、并在该目录 README 登记 |
 | **git 历史** | BLOCK | 以上各项在历史提交里再查一遍。`git rm` 删不掉历史，公开的那一刻历史就是公开的 |
-| 文档缺失 | WARN | `SECURITY.md`、`docs/CONTRACT.md` |
+| 文档缺失 | BLOCK / WARN | `README.md`、`LICENSE`、`SECURITY.md` 缺失是 BLOCK；`docs/CONTRACT.md` 是 WARN |
+| 漏洞报告邮箱 | BLOCK | `SECURITY.md` 若只剩 `your-domain.com` 这类占位邮箱，等于渠道不通 |
 | `TODO` 类占位符 | WARN | 代码注释里的待办不算 |
 
 ### 私有域名为什么不写在代码里
