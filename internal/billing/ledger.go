@@ -241,23 +241,41 @@ func (l *Ledger) Close() error {
 
 // Aggregate 是一天的汇总，字段与 /v1/usage 的输出一一对应。
 type Aggregate struct {
-	Requests         int
-	Succeeded        int
-	Failed           int
-	InChars          int
-	BillChars        int
-	UpCredits        int
-	OkBillChars      int
-	OkUpCredits      int
-	OkSentChars      int
-	SentChars        int
-	SavedChars       int
+	Requests    int
+	Succeeded   int
+	Failed      int
+	InChars     int
+	BillChars   int
+	UpCredits   int
+	OkBillChars int
+	OkUpCredits int
+	OkSentChars int
+	SentChars   int
+	SavedChars  int
+	// 流式口径：stream=true 的行算 SSE，其余算整段。
+	// 旧行（2026-11-11 之前）没有 stream 字段，一律按非流式计 —— 当时线上确实是纯非流式。
+	SSERequests   int
+	AudioRequests int
+	StreamIgnored int
+	SSERatio      *float64
+	// ByModel 按上游真实模型分档。flash 档单价约为 v3 的一半，
+	// 混在一起算平均会得到一个既不代表 flash 也不代表 v3 的假数字。
+	ByModel          map[string]*ModelAgg
 	SavedRatio       *float64
 	CreditsPerChar   *float64
 	GrossMarginRatio *float64
 	UpCostUSD        *float64
 	RevenueUSD       *float64
 	Path             string
+}
+
+// ModelAgg 是单档模型的用量与单价。CreditsPerChar 只在有成功请求时才有值。
+type ModelAgg struct {
+	Requests       int
+	SentChars      int
+	BillChars      int
+	UpCredits      int
+	CreditsPerChar *float64
 }
 
 // Stats 汇总某天账本（day 为空表示今天）。
@@ -291,6 +309,35 @@ func (l *Ledger) WindowStats(days int) Aggregate {
 	return out
 }
 
+// modelKeyOf 返回账本行的模型档位键：优先上游真实 model_id，退回客户端传入值。
+//
+// 只记 `model` 是不够的 —— 请求显式传 voice 时那个字段会变成音色别名（如 rachel），
+// 按它统计会把不同档位的成本混成一个既不准确也无法解释的平均值。
+func modelKeyOf(r *Row) string {
+	if r.ModelID != nil && *r.ModelID != "" {
+		return *r.ModelID
+	}
+	if r.Model != nil && *r.Model != "" {
+		return *r.Model
+	}
+	return ""
+}
+
+// uniqSorted 去重并排序：map 遍历无序，输出必须可复现。
+func uniqSorted(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // TokenAgg 是按客户令牌聚合的用量。
 type TokenAgg struct {
 	Token      string
@@ -300,7 +347,11 @@ type TokenAgg struct {
 	UpCredits  int
 	SavedChars int
 	SavedRatio float64
-	LastSeen   int64
+	// 流式拆分：与 /v1/usage 的 today/window 同口径，便于按客户看「这个人用不用流式」
+	SSERequests int
+	SSERatio    float64
+	Models      []string
+	LastSeen    int64
 }
 
 // UsageByToken 按客户令牌聚合最近 N 天用量。只统计成功请求。
@@ -331,6 +382,12 @@ func (l *Ledger) UsageByToken(days int) []TokenAgg {
 			if r.UpCredits != nil {
 				a.UpCredits += *r.UpCredits
 			}
+			if r.Stream != nil && *r.Stream {
+				a.SSERequests++
+			}
+			if m := modelKeyOf(r); m != "" {
+				a.Models = append(a.Models, m)
+			}
 			if r.InChars > r.SentChars {
 				a.SavedChars += r.InChars - r.SentChars
 			}
@@ -345,6 +402,10 @@ func (l *Ledger) UsageByToken(days int) []TokenAgg {
 		if a.InChars > 0 {
 			a.SavedRatio = round4(float64(a.SavedChars) / float64(a.InChars))
 		}
+		if a.Requests > 0 {
+			a.SSERatio = round4(float64(a.SSERequests) / float64(a.Requests))
+		}
+		a.Models = uniqSorted(a.Models)
 		rows = append(rows, *a)
 	}
 	// 按节省量降序；同值时按 token 升序，保证输出可复现
@@ -373,6 +434,37 @@ func (l *Ledger) scanFiles(paths []string, out *Aggregate) {
 			if r.UpCredits != nil {
 				out.UpCredits += *r.UpCredits
 			}
+
+			// 流式口径：兼容旧行（无 stream 字段 → 按非流式计）
+			if r.Stream != nil && *r.Stream {
+				out.SSERequests++
+			} else {
+				out.AudioRequests++
+			}
+			if r.StreamIgnored {
+				out.StreamIgnored++
+			}
+
+			// 按档位聚合：失败行也计次数与字符（与 requests 同口径），
+			// 但 sent_chars 只在成功行累加 —— 否则单价分母会被 0 字符的失败行稀释。
+			modelKey := modelKeyOf(r)
+			if modelKey == "" {
+				modelKey = "<unknown>"
+			}
+			if out.ByModel == nil {
+				out.ByModel = map[string]*ModelAgg{}
+			}
+			m := out.ByModel[modelKey]
+			if m == nil {
+				m = &ModelAgg{}
+				out.ByModel[modelKey] = m
+			}
+			m.Requests++
+			m.BillChars += r.BillChars
+			if r.UpCredits != nil {
+				m.UpCredits += *r.UpCredits
+			}
+
 			if !ok {
 				return
 			}
@@ -383,6 +475,7 @@ func (l *Ledger) scanFiles(paths []string, out *Aggregate) {
 			// 清理掉的字符：原始输入 - 实际合成
 			out.SentChars += r.SentChars
 			out.OkSentChars += r.SentChars
+			m.SentChars += r.SentChars
 			if r.InChars > r.SentChars {
 				out.SavedChars += r.InChars - r.SentChars
 			}
@@ -391,6 +484,18 @@ func (l *Ledger) scanFiles(paths []string, out *Aggregate) {
 }
 
 func (out *Aggregate) finalize(upCreditsPerUSD, charsPerUSD float64) {
+	// 流式占比：分母为 0 时保持 nil（宁可不给，不给错数）
+	if total := out.SSERequests + out.AudioRequests; total > 0 {
+		v := round4(float64(out.SSERequests) / float64(total))
+		out.SSERatio = &v
+	}
+	// 每档模型的真实单价：积分 / 实际合成字符。缺任一条件都留 nil。
+	for _, m := range out.ByModel {
+		if m.SentChars > 0 && m.UpCredits > 0 {
+			v := round4(float64(m.UpCredits) / float64(m.SentChars))
+			m.CreditsPerChar = &v
+		}
+	}
 	if out.InChars > 0 && out.SavedChars > 0 {
 		v := round4(float64(out.SavedChars) / float64(out.InChars))
 		out.SavedRatio = &v

@@ -46,12 +46,15 @@ func (a *App) handleUsage(c *gin.Context) {
 		totalSaved += r.SavedChars
 		totalRequests += r.Requests
 		callers = append(callers, gin.H{
-			"caller":      r.Token,
-			"requests":    r.Requests,
-			"in_chars":    r.InChars,
-			"sent_chars":  r.SentChars,
-			"saved_chars": r.SavedChars,
-			"saved_ratio": r.SavedRatio,
+			"caller":       r.Token,
+			"requests":     r.Requests,
+			"in_chars":     r.InChars,
+			"sent_chars":   r.SentChars,
+			"saved_chars":  r.SavedChars,
+			"saved_ratio":  r.SavedRatio,
+			"sse_requests": r.SSERequests,
+			"sse_ratio":    r.SSERatio,
+			"models":       r.Models,
 		})
 	}
 
@@ -69,6 +72,11 @@ func (a *App) handleUsage(c *gin.Context) {
 			"bill_chars":         today.BillChars,
 			"saved_chars":        today.SavedChars,
 			"saved_ratio":        today.SavedRatio,
+			"sse_requests":       today.SSERequests,
+			"audio_requests":     today.AudioRequests,
+			"stream_ignored":     today.StreamIgnored,
+			"sse_ratio":          today.SSERatio,
+			"by_model":           modelViews(today.ByModel),
 			"gross_margin_ratio": today.GrossMarginRatio,
 			"credits_per_char":   today.CreditsPerChar,
 			"up_cost_usd":        today.UpCostUSD,
@@ -84,6 +92,11 @@ func (a *App) handleUsage(c *gin.Context) {
 			"sent_chars":         totalSent,
 			"saved_chars":        totalSaved,
 			"saved_ratio":        ratioOrZero(totalSaved, totalIn),
+			"sse_requests":       win.SSERequests,
+			"audio_requests":     win.AudioRequests,
+			"stream_ignored":     win.StreamIgnored,
+			"sse_ratio":          win.SSERatio,
+			"by_model":           modelViews(win.ByModel),
 			"gross_margin_ratio": win.GrossMarginRatio,
 			"credits_per_char":   win.CreditsPerChar,
 			"up_cost_usd":        win.UpCostUSD,
@@ -93,6 +106,24 @@ func (a *App) handleUsage(c *gin.Context) {
 		"billing_mode": a.Cfg.BillingMode,
 		"note":         note,
 	})
+}
+
+// modelViews 把按档位聚合转成对外结构。
+//
+// 按 model_id 分档是必须的：flash 档单价约为 v3 的一半，混在一起算平均
+// 会得到一个既不代表 flash 也不代表 v3 的数字，看板据此定价就是错的。
+func modelViews(m map[string]*billing.ModelAgg) gin.H {
+	out := make(gin.H, len(m))
+	for k, v := range m {
+		out[k] = gin.H{
+			"requests":         v.Requests,
+			"sent_chars":       v.SentChars,
+			"bill_chars":       v.BillChars,
+			"up_credits":       v.UpCredits,
+			"credits_per_char": v.CreditsPerChar,
+		}
+	}
+	return out
 }
 
 // ratioOrZero 窗口级 saved_ratio：分母为 0 时返回 0（与 Python 版一致）。
