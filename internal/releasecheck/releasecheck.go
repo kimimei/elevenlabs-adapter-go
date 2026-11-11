@@ -634,8 +634,16 @@ func RuleSecurityContact(e *Env, r *Report) {
 
 	emailRe := regexp.MustCompile(`[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}`)
 	emails := uniq(emailRe.FindAllString(body.String(), -1))
-	if len(emails) == 0 {
-		r.Add(Block, "漏洞报告邮箱", "SECURITY.md", "没有找到任何邮箱地址")
+
+	// 两种合法渠道，具其一即可：
+	//   1) 一个真实可收信的邮箱
+	//   2) GitHub 的私密漏洞报告（Security → Report a vulnerability）
+	// 后者对开源仓库更合适：报告不进个人信箱，能直接在 advisory 里协作、出私密补丁，
+	// 也不要求报告者暴露自己的邮箱。两者都没有才是问题 —— 那等于漏洞无处可报。
+	hasAdvisory := strings.Contains(s, "Report a vulnerability") || strings.Contains(s, "Security Advisory")
+	if len(emails) == 0 && !hasAdvisory {
+		r.Add(Block, "漏洞报告邮箱", "SECURITY.md",
+			"既没有邮箱，也没有 GitHub 私密报告入口 —— 漏洞无处可报")
 		return
 	}
 	for _, em := range emails {
@@ -644,8 +652,8 @@ func RuleSecurityContact(e *Env, r *Report) {
 			r.Add(Block, "漏洞报告邮箱", "SECURITY.md", em+" 是占位符，换成真实可收信的邮箱")
 		}
 	}
-	// 邮箱之外的备份通道：邮箱换了人、离职、被墙都可能失效。
-	if !strings.Contains(s, "Report a vulnerability") && !strings.Contains(s, "Security Advisory") {
+	// 只靠邮箱仍有风险：换人、离职、被墙都可能失效，建议同时给出 advisory 入口。
+	if len(emails) > 0 && !hasAdvisory {
 		r.Add(Warn, "私密报告通道", "SECURITY.md",
 			"未提 GitHub 的 Security Advisory 入口，建议补上作为邮箱之外的备份通道")
 	}

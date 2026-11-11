@@ -352,6 +352,18 @@ func TestSecurityContactMustBeReal(t *testing.T) {
 		t.Fatalf("合规 SECURITY.md 被误判：%v", r3.Items)
 	}
 
+	// 反向：完全不写邮箱、只给 GitHub 私密报告入口，也必须放行。
+	// 开源仓库本来就该优先走 advisory —— 报告不进个人信箱，也不要求报告者留邮箱。
+	dir5 := t.TempDir()
+	write(t, dir5, "SECURITY.md",
+		"唯一入口：本仓库 Security → Report a vulnerability\n")
+	e5 := envFromDir(dir5)
+	r5 := &Report{}
+	RuleSecurityContact(e5, r5)
+	if len(r5.Items) != 0 {
+		t.Fatalf("只用 advisory 入口被误判：%v", r5.Items)
+	}
+
 	// 引用块里的占位符是「提示语」，不算没填
 	dir4 := t.TempDir()
 	write(t, dir4, "SECURITY.md",
