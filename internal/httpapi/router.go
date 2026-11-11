@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/kimimei/elevenlabs-adapter-go/internal/buildinfo"
 	"github.com/kimimei/elevenlabs-adapter-go/internal/web"
 )
 
@@ -64,6 +65,7 @@ func (a *App) Router() *gin.Engine {
 func (a *App) handleHealthz(c *gin.Context) {
 	out := gin.H{
 		"status":  "ok",
+		"version": buildinfo.Version,
 		"mock":    a.Cfg.Mock,
 		"catalog": a.Catalog.EngineIDs,
 		"demo":    a.Cfg.DemoEnabled,

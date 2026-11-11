@@ -37,7 +37,7 @@ new-api **自己数**字符，不读适配器的任何 `X-Usage-*` 头。
 | GET | `/v1/presets` | ✅ | 补充包清单与启用状态 |
 | GET | `/v1/voices` | ✅ | 音色目录，`with_preview=1` 带试听链接 |
 | GET | `/v1/usage` | ✅ | 用量看板（只读本地账本） |
-| GET | `/healthz` | ✅ | 健康检查，**豁免 IP 白名单** |
+| GET | `/healthz` | ✅ | 健康检查，**豁免 IP 白名单**；返回 `version`（与 git tag 同名），一个 curl 就能确认线上版本 |
 | GET | `/` | ✅ | 静态页（试听 + 配置生成器） |
 | GET | `/static/*` | ✅ | 静态资源 |
 | POST | `/v1/audio/speech/jobs` | ✅ | 提交长文本任务，202 + `Location` |
