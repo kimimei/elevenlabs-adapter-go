@@ -164,6 +164,12 @@ func TTSURL(base, voiceID string) string {
 	return base + "/text-to-speech/" + url.PathEscape(voiceID)
 }
 
+// TTSStreamURL 是流式端点。**多一个 /stream 后缀**，别写成 ?
+// 上游对非流式端点带 stream 参数是直接忽略的，看起来"成功"其实还是整段返回。
+func TTSStreamURL(base, voiceID string) string {
+	return base + "/text-to-speech/" + url.PathEscape(voiceID) + "/stream"
+}
+
 // BuildPayload 组装上游请求体。
 func BuildPayload(text, modelID, outputFormat string, speed *float64, extra Extra) map[string]any {
 	payload := map[string]any{

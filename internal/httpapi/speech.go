@@ -48,6 +48,7 @@ type speechIn struct {
 	ResponseFormat string
 	Speed          *float64
 	Stream         bool
+	StreamFormat   string
 	TextClean      string
 }
 
@@ -103,26 +104,36 @@ func (a *App) handleSpeech(c *gin.Context) {
 	tokName := tokenLabel(firstNonEmpty(authz, xAPIKey, apiKeyHeader))
 	cleanRules := strings.Join(report.Rules, ",")
 
+	// 流式相关：isSSE 决定走哪条上游端点，streamIgnored 记录「客户要了流式但没给对参数」
+	isSSE := in.StreamFormat == "sse"
+	streamIgnored := in.Stream && !isSSE
+	// 上游真实模型 id 在 ResolveVoiceAndModel 之后才拿到，闭包按引用读这个变量
+	modelIDRec := ""
+
 	// record 记一行账，返回应附加到响应的头。
 	// 错误响应也必须带 X-Request-Id —— 客户说「这次失败还被扣钱了」时，
 	// 没有 rid 就无从查起。
 	record := func(status int, upCredits *int, upRID *string, errMsg string) map[string]string {
 		entry := billing.Entry{
-			RID:          rid,
-			UpRID:        upRID,
-			Model:        modelName,
-			Voice:        voiceName,
-			InChars:      inChars,
-			SentChars:    sentChars,
-			UpCredits:    upCredits,
-			Status:       status,
-			ElapsedMS:    int(time.Since(start).Milliseconds()),
-			ClientIP:     clientIP,
-			TokenName:    tokName,
-			Error:        errMsg,
-			RawChars:     rawChars,
-			CleanedChars: sentChars,
-			CleanRules:   cleanRules,
+			RID:           rid,
+			UpRID:         upRID,
+			Model:         modelName,
+			ModelID:       modelIDRec,
+			Voice:         voiceName,
+			Stream:        isSSE,
+			StreamFormat:  in.StreamFormat,
+			StreamIgnored: streamIgnored,
+			InChars:       inChars,
+			SentChars:     sentChars,
+			UpCredits:     upCredits,
+			Status:        status,
+			ElapsedMS:     int(time.Since(start).Milliseconds()),
+			ClientIP:      clientIP,
+			TokenName:     tokName,
+			Error:         errMsg,
+			RawChars:      rawChars,
+			CleanedChars:  sentChars,
+			CleanRules:    cleanRules,
 		}
 		if err := a.Ledger.Record(entry); err != nil {
 			log.Printf("billing log write failed (request %s): %v", rid, err)
@@ -155,9 +166,26 @@ func (a *App) handleSpeech(c *gin.Context) {
 	// 且报错信息对他们没有指导意义 —— 他们只是照抄了 OpenAI 的默认参数。
 	// 这类客户端拿到完整的 audio/mpeg 音频流同样能正常播放，丢的只是首包延迟。
 	// 用 X-Stream-Ignored 头显式告知，避免「以为在流式、其实不是」这种静默差异。
-	if in.Stream {
+	if streamIgnored {
 		setHeader(c, "X-Stream-Ignored", "true")
-		setHeader(c, "X-Stream-Reason", "adapter returns complete audio, not chunked stream")
+		setHeader(c, "X-Stream-Reason", "stream_format is not sse; returning complete audio")
+	}
+	if in.StreamFormat != "audio" && in.StreamFormat != "sse" {
+		writeErr(c, http.StatusBadRequest, "stream_format 仅支持 audio 或 sse",
+			"invalid_request_error",
+			`要边生成边播放就传 "stream_format":"sse"（并配 response_format=mp3）；只要整段音频就别传这个字段`,
+			record(400, nil, nil, "stream_format 不支持"))
+		return
+	}
+	if isSSE && in.ResponseFormat != "mp3" {
+		// 与 Python 版一致：WAV 需要完整长度才能写 RIFF 头，伪造一个假头
+		// 会让播放器读到 0 时长，比直接拒绝更难排查。
+		writeErr(c, http.StatusBadRequest,
+			"SSE 流式仅支持 mp3；WAV 需要完整长度，不能伪造 RIFF 头",
+			"invalid_request_error",
+			`把 response_format 改成 mp3（流式默认值），或去掉 stream_format 走非流式`,
+			record(400, nil, nil, "流式格式不支持"))
+		return
 	}
 
 	fmtSpec, ok := upstream.Formats[in.ResponseFormat]
@@ -180,6 +208,7 @@ func (a *App) handleSpeech(c *gin.Context) {
 		return
 	}
 	voiceName = voiceID
+	modelIDRec = modelID
 	if voiceID == "" {
 		writeErr(c, http.StatusBadRequest,
 			"无法确定 voice_id：请在请求中传 voice（音色名或 voice_id），"+
@@ -202,6 +231,21 @@ func (a *App) handleSpeech(c *gin.Context) {
 	}
 
 	speedUsed, speedClamped := upstream.ClampSpeed(in.Speed)
+
+	// 流式走独立路径：它不能复用下面的 body []byte 流程 —— 那个流程天然要
+	// 把整段音频攒在内存里，攒完再发，正好把流式的意义抵消掉。
+	if isSSE {
+		a.handleSpeechStream(c, streamReq{
+			RID: rid, Text: text, ModelID: modelID, VoiceID: voiceID, APIKey: apiKey,
+			OutputFormat: fmtSpec.Output, Speed: in.Speed, Extra: extra,
+			InChars: inChars, SentChars: sentChars, RawChars: rawChars,
+			ModelName: modelName, VoiceName: voiceName, ClientIP: clientIP,
+			TokenName: tokName, CleanMode: cleanMode, Removed: report.Removed,
+			SpeedUsed: speedUsed, SpeedClamped: speedClamped,
+			Mock: a.Cfg.Mock, Record: record,
+		})
+		return
+	}
 
 	var (
 		body        []byte
@@ -370,6 +414,19 @@ func parseSpeechBody(raw []byte, defaultModel string) (*speechIn, *parseErr) {
 			return nil, &parseErr{field: "stream", message: "Input should be a valid boolean", fix: validationFix}
 		}
 		out.Stream = b
+	}
+
+	// stream_format 才是真正控制流式的字段（与 OpenAI 一致，也与 new-api 的
+	// AudioRequest.StreamFormat 对齐）。缺省 audio。
+	if vv, ok := m["stream_format"]; ok && !isNull(vv) {
+		s, ok := asString(vv)
+		if !ok {
+			return nil, &parseErr{field: "stream_format", message: "Input should be a valid string", fix: validationFix}
+		}
+		out.StreamFormat = s
+	}
+	if out.StreamFormat == "" {
+		out.StreamFormat = "audio"
 	}
 
 	if vv, ok := m["text_clean"]; ok && !isNull(vv) {

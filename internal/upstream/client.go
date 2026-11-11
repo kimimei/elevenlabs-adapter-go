@@ -120,15 +120,116 @@ func (c *Client) TextToSpeech(ctx context.Context, text, modelID, voiceID, apiKe
 	return nil, errors.New("上游调用未返回结果")
 }
 
+// StreamConn 是流式上游响应的句柄。
+//
+// 与 Response 的区别只有一条，但很关键：**Body 是没读过的实时流**。
+// 调用方必须 Close（内部会连带 cancel 掉超时 ctx），否则连接与定时器一起泄漏。
+type StreamConn struct {
+	StatusCode int
+	Header     http.Header
+	Body       io.ReadCloser // 仅 200 时非空；非 200 的错误体在 ErrorBody
+	ErrorBody  []byte
+	cancel     context.CancelFunc
+}
+
+// Close 关闭响应体并释放超时 ctx。
+func (s *StreamConn) Close() error {
+	var err error
+	if s.Body != nil {
+		err = s.Body.Close()
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+	return err
+}
+
+// TextToSpeechStream 调用 POST /v1/text-to-speech/{voice_id}/stream，返回**未消费**的响应体。
+//
+// 与 TextToSpeech 的三点差异，都是流式特有的：
+//  1. 不 ReadAll —— 读完就不再是流了，等于白做；
+//  2. 不设 http.Client.Timeout。那个超时把"读响应体"也算进去，
+//     长音频会在流的中间被砍断，且报错信息看不懂。这里用 per-request ctx 兜底；
+//  3. **只在拿到响应头之前重试**。一旦 200 头返回、开始往客户端写字节，
+//     再重试就会把两段音频拼在一起，而上游已经扣过费 —— 那是双重损失。
+func (c *Client) TextToSpeechStream(ctx context.Context, text, modelID, voiceID, apiKey,
+	outputFormat string, speed *float64, extra Extra) (*StreamConn, error) {
+
+	payload := BuildPayload(text, modelID, outputFormat, speed, extra)
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("请求体序列化失败: %w", err)
+	}
+	target := TTSStreamURL(c.base, voiceID)
+
+	attempts := c.maxRetries + 1
+	var lastErr error
+
+	for i := 0; i < attempts; i++ {
+		reqCtx, cancel := context.WithTimeout(ctx, c.timeout)
+		req, rerr := http.NewRequestWithContext(reqCtx, http.MethodPost, target, bytes.NewReader(buf))
+		if rerr != nil {
+			cancel()
+			return nil, fmt.Errorf("构造上游请求失败: %w", rerr)
+		}
+		req.Header.Set("xi-api-key", apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "audio/mpeg")
+
+		resp, derr := c.hc.Do(req)
+		if derr != nil {
+			cancel()
+			if isTimeout(derr) {
+				// 与同步路径同一条铁律：超时不重试，上游可能已经合成并扣费
+				return nil, fmt.Errorf("上游超时 %.0fs（不重试：上游大概率已合成并扣费，重试等于再扣一次）",
+					c.timeout.Seconds())
+			}
+			lastErr = derr
+			if i == attempts-1 {
+				return nil, derr
+			}
+			sleepBackoff(ctx, i)
+			continue
+		}
+
+		// 200：把流原样交出去，cancel 挂在 StreamConn 上由调用方释放
+		if resp.StatusCode == http.StatusOK {
+			return &StreamConn{StatusCode: 200, Header: resp.Header, Body: resp.Body, cancel: cancel}, nil
+		}
+
+		// 非 200：错误体很小，读完再关（不读完这条连接没法复用），再决定要不要重试
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		resp.Body.Close()
+		cancel()
+		sc := &StreamConn{StatusCode: resp.StatusCode, Header: resp.Header, ErrorBody: errBody}
+		if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			return sc, nil
+		}
+		if i == attempts-1 {
+			return sc, nil
+		}
+		sleepBackoff(ctx, i)
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("上游调用未返回结果")
+}
+
 // ErrorMessage 提取上游错误体中的可读信息（detail 可能是对象或字符串）。
 func ErrorMessage(resp *Response) string {
-	var body map[string]any
-	if err := json.Unmarshal(resp.Body, &body); err != nil {
-		return fmt.Sprintf("ElevenLabs 上游错误 HTTP %d", resp.StatusCode)
+	return ErrorMessageBytes(resp.StatusCode, resp.Body)
+}
+
+// ErrorMessageBytes 与 ErrorMessage 同逻辑，供流式路径使用（那里只有 body 字节，没有 Response）。
+func ErrorMessageBytes(status int, body []byte) string {
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Sprintf("ElevenLabs 上游错误 HTTP %d", status)
 	}
-	detail, ok := body["detail"]
+	detail, ok := parsed["detail"]
 	if !ok {
-		detail = body
+		detail = parsed
 	}
 	switch d := detail.(type) {
 	case map[string]any:
@@ -138,11 +239,11 @@ func ErrorMessage(resp *Response) string {
 		if s, ok := d["status"].(string); ok && s != "" {
 			return "ElevenLabs: " + s
 		}
-		return fmt.Sprintf("ElevenLabs 上游错误 HTTP %d", resp.StatusCode)
+		return fmt.Sprintf("ElevenLabs 上游错误 HTTP %d", status)
 	case string:
 		return "ElevenLabs: " + d
 	}
-	return fmt.Sprintf("ElevenLabs 上游错误 HTTP %d", resp.StatusCode)
+	return fmt.Sprintf("ElevenLabs 上游错误 HTTP %d", status)
 }
 
 func isTimeout(err error) bool {

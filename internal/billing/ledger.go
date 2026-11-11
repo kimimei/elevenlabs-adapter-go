@@ -20,44 +20,54 @@ type Entry struct {
 	UpRID        *string
 	Model        string
 	Voice        string
-	InChars      int
-	SentChars    int
-	UpCredits    *int
-	Status       int
-	ElapsedMS    int
-	ClientIP     string
-	TokenName    string
-	Error        string
-	RawChars     int
-	CleanedChars int
-	CleanRules   string
-	Async        bool
+	ModelID      string // 上游真实模型（eleven_v3…）。Model 可能只是音色别名，算成本只能用它
+	Stream       bool   // 本次是否实际走了 SSE
+	StreamFormat string // sse / audio
+	// 客户端传了 stream:true 却没给 stream_format=sse：首包必然差，
+	// 不单独标记就会被误判成适配器性能问题
+	StreamIgnored bool
+	InChars       int
+	SentChars     int
+	UpCredits     *int
+	Status        int
+	ElapsedMS     int
+	ClientIP      string
+	TokenName     string
+	Error         string
+	RawChars      int
+	CleanedChars  int
+	CleanRules    string
+	Async         bool
 }
 
 // Row 是账本里的一行。字段顺序即 JSON 输出顺序，与 Python 版保持一致：
 // M6 影子对账要把两边逐字段 diff，顺序一致能省掉一轮视觉噪声。
 type Row struct {
-	TS           int64   `json:"ts"`
-	RID          string  `json:"rid"`
-	UpRID        *string `json:"up_rid"`
-	Model        *string `json:"model"`
-	Voice        *string `json:"voice"`
-	InChars      int     `json:"in_chars"`
-	SentChars    int     `json:"sent_chars"`
-	BillChars    int     `json:"bill_chars"`
-	BillSource   string  `json:"bill_source"`
-	BillRule     string  `json:"bill_rule"`
-	UpCredits    *int    `json:"up_credits"`
-	Status       int     `json:"status"`
-	MS           int     `json:"ms"`
-	Mode         string  `json:"mode"`
-	IP           *string `json:"ip"`
-	Token        *string `json:"token"`
-	Error        string  `json:"error,omitempty"`
-	RawChars     int     `json:"raw_chars"`
-	CleanedChars int     `json:"cleaned_chars"`
-	CleanRules   *string `json:"clean_rules"`
-	Async        bool    `json:"async,omitempty"`
+	TS            int64   `json:"ts"`
+	RID           string  `json:"rid"`
+	UpRID         *string `json:"up_rid"`
+	Model         *string `json:"model"`
+	ModelID       *string `json:"model_id"`
+	Voice         *string `json:"voice"`
+	Stream        *bool   `json:"stream"`
+	StreamFormat  *string `json:"stream_format"`
+	StreamIgnored bool    `json:"stream_ignored"`
+	InChars       int     `json:"in_chars"`
+	SentChars     int     `json:"sent_chars"`
+	BillChars     int     `json:"bill_chars"`
+	BillSource    string  `json:"bill_source"`
+	BillRule      string  `json:"bill_rule"`
+	UpCredits     *int    `json:"up_credits"`
+	Status        int     `json:"status"`
+	MS            int     `json:"ms"`
+	Mode          string  `json:"mode"`
+	IP            *string `json:"ip"`
+	Token         *string `json:"token"`
+	Error         string  `json:"error,omitempty"`
+	RawChars      int     `json:"raw_chars"`
+	CleanedChars  int     `json:"cleaned_chars"`
+	CleanRules    *string `json:"clean_rules"`
+	Async         bool    `json:"async,omitempty"`
 }
 
 // Ledger 是按天切分的 JSONL 账本。
@@ -113,27 +123,31 @@ func (l *Ledger) Record(e Entry) error {
 	n, src := BillCharsByMode(l.mode, e.InChars, e.SentChars, e.UpCredits, e.Status)
 
 	row := Row{
-		TS:           now.Unix(),
-		RID:          e.RID,
-		UpRID:        e.UpRID,
-		Model:        optStr(e.Model),
-		Voice:        optStr(e.Voice),
-		InChars:      e.InChars,
-		SentChars:    e.SentChars,
-		BillChars:    n,
-		BillSource:   src,
-		BillRule:     RuleText(l.mode, n, e.InChars, e.UpCredits, e.Status, src),
-		UpCredits:    e.UpCredits,
-		Status:       e.Status,
-		MS:           e.ElapsedMS,
-		Mode:         l.mode,
-		IP:           optStr(e.ClientIP),
-		Token:        optStr(e.TokenName),
-		Error:        truncateRunes(e.Error, 200),
-		RawChars:     e.RawChars,
-		CleanedChars: e.CleanedChars,
-		CleanRules:   optStr(e.CleanRules),
-		Async:        e.Async,
+		TS:            now.Unix(),
+		RID:           e.RID,
+		UpRID:         e.UpRID,
+		Model:         optStr(e.Model),
+		ModelID:       optStr(e.ModelID),
+		Voice:         optStr(e.Voice),
+		Stream:        &e.Stream,
+		StreamFormat:  optStr(e.StreamFormat),
+		StreamIgnored: e.StreamIgnored,
+		InChars:       e.InChars,
+		SentChars:     e.SentChars,
+		BillChars:     n,
+		BillSource:    src,
+		BillRule:      RuleText(l.mode, n, e.InChars, e.UpCredits, e.Status, src),
+		UpCredits:     e.UpCredits,
+		Status:        e.Status,
+		MS:            e.ElapsedMS,
+		Mode:          l.mode,
+		IP:            optStr(e.ClientIP),
+		Token:         optStr(e.TokenName),
+		Error:         truncateRunes(e.Error, 200),
+		RawChars:      e.RawChars,
+		CleanedChars:  e.CleanedChars,
+		CleanRules:    optStr(e.CleanRules),
+		Async:         e.Async,
 	}
 
 	var buf bytes.Buffer
