@@ -60,7 +60,7 @@ type Config struct {
 // Load 从环境变量构造配置。任何非法值都退回默认值，绝不因为一个可选变量把服务打死。
 func Load() *Config {
 	return &Config{
-		APIBase:        strings.TrimRight(envStr("ELEVENLABS_API_BASE", "https://api.elevenlabs.io/v1"), "/"),
+		APIBase: strings.TrimRight(envStr("ELEVENLABS_API_BASE", "https://api.elevenlabs.io/v1"), "/"),
 		// 默认引擎用 eleven_v3 而不是 eleven_multilingual_v2。
 		// 原因（2026-11-05 实测）：multilingual_v2 在中文多音字上会读错，
 		// 例如「配音行业的那些事」把「配音」读成「配硬」（pèi yīn → pèi yìng）。
