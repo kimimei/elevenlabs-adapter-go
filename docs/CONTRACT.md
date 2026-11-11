@@ -225,6 +225,23 @@ Go 版直接写底层 map 绕过。
 | 崩溃/关闭中断 | `502` | 同上 |
 | 本地校验失败（voice/format） | **不写行** | 压根没碰上游，不制造噪声；与 Python 版一致 |
 
+**`/v1/usage` 的聚合口径**（`today` 与 `window` 同构）：
+
+| 字段 | 含义 |
+|---|---|
+| `requests` / `succeeded` / `failed` | 按 `status` 分流；失败行也计入 `requests` |
+| `sse_requests` / `audio_requests` / `sse_ratio` | 按账本 `stream` 分组；旧行无该字段按非流式计 |
+| `stream_ignored` | 客户传了 `stream=true` 却没开 sse 的次数（这类请求拿的是整段音频） |
+| `by_model.<model_id>` | `requests` / `sent_chars` / `bill_chars` / `up_credits` / `credits_per_char` |
+| `by_caller[]` | 按客户令牌：`sse_requests` / `sse_ratio` / `models`（实际用到的档位） |
+
+两处口径**故意不同**：`sse_ratio` 的分母是 `sse_requests + audio_requests`（含失败行），
+回答的是「多少请求走了流式」；而 `by_caller[].requests` 只含成功行，因为它要同源的字符数。
+混成一个数会让「有请求没字符」这种自相矛盾的读数再次出现。
+
+按 `model_id` 分档是必须的：flash 档单价约是 v3 的一半，混算得出的平均值既不代表 flash 也不代表 v3，
+据此定价必错。`credits_per_char` 缺 `sent_chars` 或 `up_credits` 时返回 `null`，不拿估算值顶替。
+
 **试听（demo）刻意不记账**：它用的是服务端自己的 Key，没有 new-api 侧的对应记录；
 混进账本会让 L1 对账凭空多出一批「有计费无日志」的行，把真正的漏记淹掉。
 
