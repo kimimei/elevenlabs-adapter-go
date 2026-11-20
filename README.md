@@ -198,6 +198,7 @@ python scripts/internal/crash_recovery_check.py # 崩溃恢复回归：真起进
 
 | 脚本 | 证明什么 | 证明不了什么 |
 |---|---|---|
+| **`scripts/selfcheck.py`** | **接入方自己的环境接没接对、会不会算错钱（客户自助，纯标准库）** | 适配器内部实现（这是开发者自检的职责） |
 | `go test ./...` | 函数与分支的正确性 | 整条链路是否接通（路由/头/落盘） |
 | `scripts/smoke.sh` | 关键链路真的通，含「杀进程再起来任务还在」 | 功能覆盖度（只管主线） |
 | `scripts/internal/acceptance.py` | 每个对外功能都能用（目录、四种格式、清理档位、错误契约、异步、demo、usage） | 与历史实现是否逐字节等价 |
@@ -210,6 +211,33 @@ python scripts/internal/crash_recovery_check.py # 崩溃恢复回归：真起进
 > ② 状态码对不代表原因对 —— 缺 Key 拿到 401 有两种原因（`authentication_error` 与
 > 上游拒绝假 Key 的 `upstream_error`），只看状态码会把假通过当成功。
 
+---
+
+## 接入方自检：接没接对、会不会算错钱
+
+上面那些是**开发者自检**（证明代码对）。如果你是接入方，想知道的是另一件事：
+**我自己这套环境接对了没有、计费会不会出错**——用 `scripts/selfcheck.py`，纯标准库，不用装任何东西。
+
+```bash
+python3 scripts/selfcheck.py --base-url http://127.0.0.1:8123 --key sk_xxx --model zh-boyin
+python3 scripts/selfcheck.py --base-url https://your-newapi --key sk-xxx --model <你的模型名> --reconcile
+```
+
+它会从外部 HTTP 跑三组检查：
+
+| 组 | 内容 | 怎么判 |
+|---|---|---|
+| A · 联网 7 项 | 服务存活 / Key 有效 / 目录非空 / 模型在册 / 合成成功 / 音频有效 / **响应头字符数 == 发送字符数** | 红绿直出，致命红退出码 1 |
+| B · 数据库 5 项 | 模型注册、abilities、ModelRatio、**AudioRatio=0**、日志 quota | 生成判据 SQL，你在自己的库里跑（库结构各环境不同，脚本不擅自连库） |
+| C · 四段对数 | 发送字符 → 响应头字符 → new-api quota → 折算美元 | 表格报告，偏差当场可见 |
+
+**第 11 项 `AudioRatio=0` 单独标红**：它是唯一一个「配错了界面也正常、但会持续多收钱」的项，
+实测踩过一次多收 5.19 倍。`--reconcile` 会真合成一次（消耗 25 字符额度），只为拿到响应头做对数。
+
+> 自检脚本与开发者自检不重叠：它不测内部实现，只验证外部可见的计费证据链。
+> 三态已反证过：正常全绿、响应头字符被改、响应头缺失——后两种都会让退出码变 1，不会被误报成通过。
+
+---
 
 ## M6 影子对账：等价性的唯一可信证明
 
