@@ -62,7 +62,7 @@ func (c *Client) TextToSpeech(ctx context.Context, text, modelID, voiceID, apiKe
 	if err != nil {
 		return nil, fmt.Errorf("请求体序列化失败: %w", err)
 	}
-	target := TTSURL(c.base, voiceID)
+	target := TTSURL(c.base, voiceID, outputFormat)
 
 	attempts := c.maxRetries + 1
 	var lastErr error
@@ -160,7 +160,7 @@ func (c *Client) TextToSpeechStream(ctx context.Context, text, modelID, voiceID,
 	if err != nil {
 		return nil, fmt.Errorf("请求体序列化失败: %w", err)
 	}
-	target := TTSStreamURL(c.base, voiceID)
+	target := TTSStreamURL(c.base, voiceID, outputFormat)
 
 	attempts := c.maxRetries + 1
 	var lastErr error

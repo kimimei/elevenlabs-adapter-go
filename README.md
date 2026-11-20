@@ -53,7 +53,7 @@ make docker         # 多阶段构建，镜像约 20MB
 
 ```
 cmd/adapter/main.go        只做装配：config → catalog → ledger → 上游 → 路由 → 优雅关闭
-internal/config            26 个环境变量，名字与默认值必须与 Python 版一致
+internal/config            31 个环境变量，与 Python 版同名同义（差异项见 ../docs/适配器配置参考.md §1）
 internal/voices            voices.json（//go:embed）+ 两层目录 + 软门禁
 internal/textclean         三档清理；RE2 重写的 Markdown 规则
 internal/upstream          ElevenLabs 调用、voice 解析、超时不重试、preview 缓存

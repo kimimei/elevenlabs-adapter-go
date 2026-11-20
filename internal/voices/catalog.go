@@ -12,6 +12,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -90,6 +91,12 @@ func Load(path string) (*Catalog, error) {
 				return nil, fmt.Errorf("读取 ELEVENLABS_VOICES_FILE 失败: %w", err)
 			}
 			data = b
+		} else {
+			// 路径设了但文件不在（容器没挂载 / 路径拼错）：以前静默回落，
+			// 用户以为自定义音色表生效了，实际仍是内置表 —— 配错看不出来。
+			// 只告警不改行为：仍用内置表启动，但让这件事在日志里留痕。
+			log.Printf("[WARN] ELEVENLABS_VOICES_FILE=%s 不存在，已回落到内置音色表。"+
+				"若你挂载了自定义 voices.json，请检查路径与 volume 挂载；确认生效可查 GET /v1/voices。", path)
 		}
 	}
 	return Parse(data)

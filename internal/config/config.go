@@ -47,6 +47,11 @@ type Config struct {
 	DemoVoices   []string
 	DemoTrustXFF bool
 
+	// CapabilitiesEnabled 控制 ElevenLabs 独占能力端点（时间戳/对白/对齐/IVC）。
+	// 默认关闭：这些端点的计费契约与标准 /v1/audio/speech 不同，
+	// 只有在隔离实例上显式置 1 才注册路由，避免存量部署无感新增可计费入口。
+	CapabilitiesEnabled bool
+
 	BillingMode     string
 	BillingLogDir   string
 	BillingLogDays  int
@@ -92,6 +97,8 @@ func Load() *Config {
 		DemoVoices: envListDefault("ADAPTER_DEMO_VOICES",
 			[]string{"zh-yingshi", "zh-boyin", "zh-pangbai"}),
 		DemoTrustXFF: envBool("ADAPTER_DEMO_TRUST_XFF"),
+
+		CapabilitiesEnabled: envBool("ADAPTER_CAPABILITIES_ENABLED"),
 
 		BillingMode:     strings.ToLower(strings.TrimSpace(envStr("ADAPTER_BILLING_MODE", "input"))),
 		BillingLogDir:   envStr("ADAPTER_BILLING_LOG_DIR", "logs/billing"),

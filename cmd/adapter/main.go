@@ -83,6 +83,8 @@ func main() {
 	} else {
 		log.Printf("[INFO] 异步任务未开启（ADAPTER_JOBS_ENABLED=0）；长文本请按 2000 字分段调用同步接口")
 	}
+	log.Printf("[INFO] ElevenLabs 能力端点：%s（ADAPTER_CAPABILITIES_ENABLED；mock=%v，真实上游调用路径已实现但本轮未实调）",
+		map[bool]string{true: "已开启", false: "未开启"}[cfg.CapabilitiesEnabled], cfg.Mock)
 	if cfg.DemoEnabled {
 		log.Printf("[INFO] 在线试听已开启：单次 %d 字符、每 IP 每小时 %d 次、音色 %s、信任 XFF=%v",
 			cfg.DemoMaxChars, cfg.DemoPerHour, strings.Join(cfg.DemoVoices, ","), cfg.DemoTrustXFF)

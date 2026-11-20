@@ -160,25 +160,28 @@ func ResolveVoiceAndModel(model, voice string, cat *voices.Catalog, defaultModel
 
 // TTSURL 组装上游合成地址。voice_id 再 quote 一次作为双保险：
 // 即使上游校验被绕过，也不让 voice_id 改写路径。
-func TTSURL(base, voiceID string) string {
-	return base + "/text-to-speech/" + url.PathEscape(voiceID)
+// output_format 是 URL query 参数 —— 放 body 会被上游忽略（默认回 mp3），
+// wav/pcm/opus 三格式全坏（2026-11-16 生产事故根因，Go 侧 2026-11-17 补齐）。
+func TTSURL(base, voiceID string, outputFormat string) string {
+	return base + "/text-to-speech/" + url.PathEscape(voiceID) +
+		"?output_format=" + url.QueryEscape(outputFormat)
 }
 
 // TTSStreamURL 是流式端点。**多一个 /stream 后缀**，别写成 ?
 // 上游对非流式端点带 stream 参数是直接忽略的，看起来"成功"其实还是整段返回。
-func TTSStreamURL(base, voiceID string) string {
-	return base + "/text-to-speech/" + url.PathEscape(voiceID) + "/stream"
+func TTSStreamURL(base, voiceID string, outputFormat string) string {
+	return base + "/text-to-speech/" + url.PathEscape(voiceID) + "/stream" +
+		"?output_format=" + url.QueryEscape(outputFormat)
 }
 
 // BuildPayload 组装上游请求体。
 func BuildPayload(text, modelID, outputFormat string, speed *float64, extra Extra) map[string]any {
 	payload := map[string]any{
-		"text":          text,
-		"model_id":      modelID,
-		"output_format": outputFormat,
+		"text":     text,
+		"model_id": modelID,
 	}
 	if extra.Lang != "" {
-		payload["language"] = extra.Lang
+		payload["language_code"] = extra.Lang
 	}
 	settings := map[string]any{}
 	for k, v := range extra.VoiceSettings {

@@ -37,6 +37,17 @@ func (a *App) Router() *gin.Engine {
 	r.GET("/v1/usage", a.handleUsage)
 	r.GET("/healthz", a.handleHealthz)
 
+	// ElevenLabs 独占能力端点。默认关闭（ADAPTER_CAPABILITIES_ENABLED=0）：
+	// 这些端点的计费契约与 /v1/audio/speech 不同，必须在隔离实例上显式开启。
+	// /v1/capabilities 始终可读，用于声明实现状态与验证边界。
+	if a.Cfg.CapabilitiesEnabled {
+		r.POST("/v1/text-to-speech/:voiceId/with-timestamps", a.capabilityHandler("with-timestamps"))
+		r.POST("/v1/text-to-dialogue", a.capabilityHandler("text-to-dialogue"))
+		r.POST("/v1/forced-alignment", a.capabilityHandler("forced-alignment"))
+		r.POST("/v1/voices/add", a.capabilityHandler("voices-add"))
+	}
+	r.GET("/v1/capabilities", a.handleCapabilities)
+
 	// 试听 + 配置生成器单页（纯静态，不依赖 Key）。
 	// 静态页里的 API 调用签名必须与 Python 版完全一致，否则页面某个按钮会 404。
 	if st := web.FS(); st != nil {

@@ -127,11 +127,16 @@ func TestVoiceToID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("加载失败: %v", err)
 	}
-	if got := c.VoiceToID("rachel"); got != "21m00Tcm4TlvDq8ikWAM" {
-		t.Fatalf("rachel -> %q", got)
+	// 不写死具体 ID：音色会因官方退役而更换，这里验的是「名字 -> 目录登记值」这条链路
+	raw := c.Voices["rachel"]
+	if raw == "" {
+		t.Fatal("目录里没有 rachel")
+	}
+	if got := c.VoiceToID("rachel"); got != raw {
+		t.Fatalf("rachel -> %q, 目录登记 %q", got, raw)
 	}
 	// 本身是合法 voice_id（长串无空格）则原样返回
-	if got := c.VoiceToID("21m00Tcm4TlvDq8ikWAM"); got != "21m00Tcm4TlvDq8ikWAM" {
+	if got := c.VoiceToID(raw); got != raw {
 		t.Fatalf("长 id 应为原样返回，got %q", got)
 	}
 	if got := c.VoiceToID("nope"); got != "" {

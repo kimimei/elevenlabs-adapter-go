@@ -59,8 +59,9 @@ func TestResolveVoiceAndModel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if id != "21m00Tcm4TlvDq8ikWAM" {
-			t.Fatalf("voice_id = %q", id)
+		// 从目录取而不是写死 ID：换音色时不必改测试，仍能验「名字解析到了目录登记的值」
+		if want := c.Voices["rachel"]; want == "" || id != want {
+			t.Fatalf("voice_id = %q, 目录登记 %q", id, want)
 		}
 		if model != "eleven_multilingual_v2" {
 			t.Fatalf("model = %q", model)
@@ -68,12 +69,15 @@ func TestResolveVoiceAndModel(t *testing.T) {
 	})
 
 	t.Run("原始 voice_id 原样透传", func(t *testing.T) {
-		id, _, _, err := ResolveVoiceAndModel("eleven_v3", "21m00Tcm4TlvDq8ikWAM", c, "eleven_multilingual_v2")
+		// 用一个中性的格式样例，不指向任何真实音色 —— 本用例只验"透传"这条逻辑。
+		// 用真实 ID 会让人误以为它在推荐该音色，而 Default 音色 2026-12-31 起全部失效。
+		const raw = "AbCdEfGhIjKlMnOpQrSt"
+		id, _, _, err := ResolveVoiceAndModel("eleven_v3", raw, c, "eleven_multilingual_v2")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if id != "21m00Tcm4TlvDq8ikWAM" {
-			t.Fatalf("voice_id = %q", id)
+		if id != raw {
+			t.Fatalf("原始 voice_id 应原样返回，got %q", id)
 		}
 	})
 
@@ -155,11 +159,16 @@ func TestBuildPayload(t *testing.T) {
 		Lang:          "zh",
 		VoiceSettings: map[string]any{"stability": 0.5},
 	})
-	if p["text"] != "你好" || p["model_id"] != "eleven_v3" || p["output_format"] != "mp3_44100_128" {
+	// output_format 是 URL query 参数（TTSURL/TTSStreamURL），不再进 body：
+	// 放 body 会被上游静默忽略、一律按默认 mp3 返回 —— wav/pcm/opus 假音频事故根因。
+	if _, exists := p["output_format"]; exists {
+		t.Fatalf("output_format 不应出现在 body（应为 query 参数）: %#v", p)
+	}
+	if p["text"] != "你好" || p["model_id"] != "eleven_v3" {
 		t.Fatalf("基础字段不对: %#v", p)
 	}
-	if p["language"] != "zh" {
-		t.Fatalf("language 未透传: %#v", p)
+	if p["language_code"] != "zh" {
+		t.Fatalf("language_code 未透传: %#v", p)
 	}
 	vs, ok := p["voice_settings"].(map[string]any)
 	if !ok {
@@ -196,8 +205,8 @@ func TestExtractCharacterCost(t *testing.T) {
 }
 
 func TestTTSURLEscapesVoiceID(t *testing.T) {
-	got := TTSURL("https://api.elevenlabs.io/v1", "abc/def")
-	want := "https://api.elevenlabs.io/v1/text-to-speech/abc%2Fdef"
+	got := TTSURL("https://api.elevenlabs.io/v1", "abc/def", "mp3_44100_128")
+	want := "https://api.elevenlabs.io/v1/text-to-speech/abc%2Fdef?output_format=mp3_44100_128"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -317,5 +326,52 @@ func TestOpenAIVoiceViaVoiceField(t *testing.T) {
 		if id == "" {
 			t.Fatalf("voice=%q 应解析出 voice_id，实际为空", name)
 		}
+	}
+}
+
+// TestVoiceOverridesAliasVoice 钉住「别名定场景、音色可换」这一契约。
+//
+// 别名的 voice_id 是建议值，不是绑定：请求里传了 voice 就必须以 voice 为准。
+// 注意这里刻意选两个不同的 id —— 用同一个值断言不出「覆盖到底有没有发生」，
+// 那种用例两侧结果相同，等于没有判据（Python 侧的同名用例已踩过一次）。
+func TestVoiceOverridesAliasVoice(t *testing.T) {
+	c := mustCatalog(t)
+
+	var alias string
+	for _, name := range c.AliasOrder {
+		if c.Aliases[name].VoiceID != "" {
+			alias = name
+			break
+		}
+	}
+	if alias == "" {
+		t.Skip("目录里没有带 voice_id 的别名")
+	}
+	spec := c.Aliases[alias]
+
+	var other string
+	for _, vid := range c.Voices {
+		if vid != spec.VoiceID {
+			other = vid
+			break
+		}
+	}
+	if other == "" {
+		t.Skip("目录里只有一种音色，无法验证覆盖")
+	}
+
+	id, model, extra, err := ResolveVoiceAndModel(alias, other, c, "eleven_v3")
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if id != other {
+		t.Fatalf("voice 未覆盖别名音色: got %q, want %q（别名自带 %q）", id, other, spec.VoiceID)
+	}
+	// 换音色不该丢场景：引擎与语言仍应来自别名。
+	if spec.Model != "" && model != spec.Model {
+		t.Fatalf("引擎被改动: got %q, want %q", model, spec.Model)
+	}
+	if extra.Lang != spec.Lang {
+		t.Fatalf("场景语言丢失: got %q, want %q", extra.Lang, spec.Lang)
 	}
 }
